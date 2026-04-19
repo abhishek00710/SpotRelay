@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="23504" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+    <device id="retina6_12" orientation="portrait" appearance="dark"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23506"/>
+        <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <scene sceneID="EHf-IW-A2E">
+            <objects>
+                <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                    <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+                        <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+                        <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                        <subviews>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="LaunchMark" translatesAutoresizingMaskIntoConstraints="NO" id="laM-1K-9qP">
+                                <rect key="frame" x="112.5" y="267" width="168" height="168"/>
+                                <constraints>
+                                    <constraint firstAttribute="width" constant="168" id="s6k-Qi-vs1"/>
+                                    <constraint firstAttribute="height" constant="168" id="2FM-2n-E3C"/>
+                                </constraints>
+                            </imageView>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="SpotRelay" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="J4A-dk-qQv">
+                                <rect key="frame" x="86.5" y="458" width="220" height="41"/>
+                                <fontDescription key="fontDescription" type="system" weight="semibold" pointSize="34"/>
+                                <color key="textColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
+                                <nil key="highlightedColor"/>
+                            </label>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Pass the spot. Skip the stress." textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="rLf-z0-b9P">
+                                <rect key="frame" x="56" y="510" width="281" height="20"/>
+                                <fontDescription key="fontDescription" type="system" weight="medium" pointSize="15"/>
+                                <color key="textColor" red="0.76078431369999997" green="0.92941176470000003" blue="0.89019607840000002" alpha="0.88" colorSpace="custom" customColorSpace="sRGB"/>
+                                <nil key="highlightedColor"/>
+                            </label>
+                        </subviews>
+                        <viewLayoutGuide key="safeArea" id="Bcu-3y-fUS"/>
+                        <color key="backgroundColor" red="0.090196078431372548" green="0.14901960784313725" blue="0.32941176470588235" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <constraints>
+                            <constraint firstItem="J4A-dk-qQv" firstAttribute="top" secondItem="laM-1K-9qP" secondAttribute="bottom" constant="23" id="4Q2-iE-0sJ"/>
+                            <constraint firstItem="J4A-dk-qQv" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="58h-Nm-nbS"/>
+                            <constraint firstItem="rLf-z0-b9P" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="6v4-hE-NuD"/>
+                            <constraint firstItem="laM-1K-9qP" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="8HW-wv-v8P"/>
+                            <constraint firstItem="laM-1K-9qP" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-82" id="dT7-M7-ncT"/>
+                            <constraint firstItem="rLf-z0-b9P" firstAttribute="top" secondItem="J4A-dk-qQv" secondAttribute="bottom" constant="11" id="lrl-Mk-e8m"/>
+                        </constraints>
+                    </view>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="52.67175572519084" y="4.225352112676056"/>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="LaunchMark" width="1024" height="1024"/>
+    </resources>
+</document>
