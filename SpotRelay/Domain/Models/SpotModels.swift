@@ -1,0 +1,67 @@
+import Foundation
+import MapKit
+
+struct AppUser: Identifiable, Codable, Equatable {
+    let id: String
+    var displayName: String
+    var successfulHandoffs: Int
+    var noShowCount: Int
+}
+
+struct ParkingSpotSignal: Identifiable, Codable, Equatable {
+    let id: String
+    let createdBy: String
+    var claimedBy: String?
+    let latitude: Double
+    let longitude: Double
+    let createdAt: Date
+    let leavingAt: Date
+    var status: SpotStatus
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+enum SpotStatus: String, Codable, CaseIterable {
+    case posted
+    case claimed
+    case arriving
+    case completed
+    case expired
+    case cancelled
+}
+
+extension ParkingSpotSignal {
+    func distanceMeters(from coordinate: CLLocationCoordinate2D) -> Int {
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let destination = CLLocation(latitude: latitude, longitude: longitude)
+        return Int(origin.distance(from: destination).rounded())
+    }
+
+    func statusLabel(for currentUserID: String) -> String {
+        switch status {
+        case .posted:
+            return "Available"
+        case .claimed:
+            return claimedBy == currentUserID ? "Claimed by you" : "Claimed"
+        case .arriving:
+            return claimedBy == currentUserID ? "You're arriving" : "Driver arriving"
+        case .completed:
+            return "Completed"
+        case .expired:
+            return "Expired"
+        case .cancelled:
+            return "Cancelled"
+        }
+    }
+
+    var isActive: Bool {
+        switch status {
+        case .posted, .claimed, .arriving:
+            return true
+        case .completed, .expired, .cancelled:
+            return false
+        }
+    }
+}
