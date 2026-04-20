@@ -278,7 +278,7 @@ struct HomeView: View {
         if spotStore.userCoordinate == nil {
             return "We’ll show live handoffs as soon as we have your current location."
         }
-        return spotStore.nearbyActiveSpots.isEmpty ? "Nothing nearby yet" : "Live signals updating around you"
+        return spotStore.nearbyActiveSpots.isEmpty ? "Nothing within 500m yet" : "Live signals updating within 500m"
     }
 
     private var collapsedSubtitle: String {
@@ -286,9 +286,9 @@ struct HomeView: View {
             return "Tap to enable your location"
         }
         if spotStore.nearbyActiveSpots.isEmpty {
-            return "No live handoffs yet"
+            return "No live handoffs within 500m"
         }
-        return spotStore.nearbyActiveSpots.count == 1 ? "1 live handoff on the map" : "\(spotStore.nearbyActiveSpots.count) live handoffs on the map"
+        return spotStore.nearbyActiveSpots.count == 1 ? "1 live handoff within 500m" : "\(spotStore.nearbyActiveSpots.count) live handoffs within 500m"
     }
 
     private var locationPendingCard: some View {

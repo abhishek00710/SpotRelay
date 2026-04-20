@@ -5,6 +5,8 @@ import CoreLocation
 
 @MainActor
 final class SpotStore: NSObject, ObservableObject {
+    let nearbySearchRadiusMeters = 500
+
     @Published private(set) var currentUser = AppUser(
         id: "current-user",
         displayName: "You",
@@ -39,6 +41,7 @@ final class SpotStore: NSObject, ObservableObject {
         guard let userCoordinate else { return [] }
         return spots
             .filter(\.isActive)
+            .filter { $0.distanceMeters(from: userCoordinate) <= nearbySearchRadiusMeters }
             .sorted { lhs, rhs in
                 lhs.distanceMeters(from: userCoordinate) < rhs.distanceMeters(from: userCoordinate)
             }
@@ -128,6 +131,9 @@ final class SpotStore: NSObject, ObservableObject {
         refreshStatuses()
         guard let index = spots.firstIndex(where: { $0.id == id }) else { return }
         guard spots[index].status == .posted else { return }
+        if let userCoordinate, spots[index].distanceMeters(from: userCoordinate) > nearbySearchRadiusMeters {
+            return
+        }
         spots[index].claimedBy = currentUser.id
         spots[index].status = .claimed
         activeHandoffID = id
