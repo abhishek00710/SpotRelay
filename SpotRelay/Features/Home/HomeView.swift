@@ -8,6 +8,7 @@ struct HomeView: View {
     let onSelectSpot: (ParkingSpotSignal) -> Void
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = true
+    @State private var isNearbySheetExpanded = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -80,7 +81,7 @@ struct HomeView: View {
             }
             .padding(.horizontal, 4)
             Spacer()
-            nearbySheet
+            nearbySheetContainer
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -138,6 +139,70 @@ struct HomeView: View {
         )
     }
 
+    private var nearbySheetContainer: some View {
+        Group {
+            if isNearbySheetExpanded {
+                nearbySheet
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                collapsedNearbySheet
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.88), value: isNearbySheetExpanded)
+    }
+
+    private var collapsedNearbySheet: some View {
+        Button {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                isNearbySheetExpanded = true
+            }
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(SpotRelayTheme.primary)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Nearby handoffs")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text(collapsedSubtitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+
+                if spotStore.userCoordinate != nil {
+                    Text("\(spotStore.nearbyActiveSpots.count)")
+                        .font(.subheadline.weight(.bold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(SpotRelayTheme.badgeFill, in: Capsule())
+                        .foregroundStyle(SpotRelayTheme.badgeText)
+                }
+
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 26,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.shadow,
+            shadowRadius: 22,
+            shadowY: 12
+        )
+    }
+
     private var nearbySheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -159,6 +224,19 @@ struct HomeView: View {
                     .padding(.vertical, 8)
                     .background(SpotRelayTheme.badgeFill, in: Capsule())
                     .foregroundStyle(SpotRelayTheme.badgeText)
+
+                Button {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                        isNearbySheetExpanded = false
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .frame(width: 34, height: 34)
+                        .background(SpotRelayTheme.badgeFill, in: Circle())
+                }
+                .buttonStyle(.plain)
             }
 
             if spotStore.userCoordinate == nil {
@@ -230,6 +308,16 @@ struct HomeView: View {
             return "We’ll show live handoffs as soon as we have your current location."
         }
         return spotStore.nearbyActiveSpots.isEmpty ? "Nothing nearby yet" : "Live signals updating around you"
+    }
+
+    private var collapsedSubtitle: String {
+        if spotStore.userCoordinate == nil {
+            return "Tap to enable your location"
+        }
+        if spotStore.nearbyActiveSpots.isEmpty {
+            return "No live handoffs yet"
+        }
+        return spotStore.nearbyActiveSpots.count == 1 ? "1 live handoff on the map" : "\(spotStore.nearbyActiveSpots.count) live handoffs on the map"
     }
 
     private var locationPendingCard: some View {
