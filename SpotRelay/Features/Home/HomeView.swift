@@ -140,24 +140,14 @@ struct HomeView: View {
     }
 
     private var nearbySheetContainer: some View {
-        Group {
-            if isNearbySheetExpanded {
-                nearbySheet
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                collapsedNearbySheet
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
+        nearbySheet
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: isNearbySheetExpanded)
     }
 
-    private var collapsedNearbySheet: some View {
-        Button {
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                isNearbySheetExpanded = true
-            }
-        } label: {
+    private var nearbySheet: some View {
+        VStack(alignment: .leading, spacing: isNearbySheetExpanded ? 16 : 12) {
+            grabber
+
             HStack(spacing: 14) {
                 Image(systemName: "mappin.and.ellipse")
                     .font(.system(size: 18, weight: .semibold))
@@ -165,11 +155,11 @@ struct HomeView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Nearby handoffs")
-                        .font(.headline.weight(.semibold))
+                        .font(isNearbySheetExpanded ? .title3.weight(.bold) : .headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                    Text(collapsedSubtitle)
-                        .font(.caption.weight(.medium))
+                    Text(isNearbySheetExpanded ? sheetSubtitle : collapsedSubtitle)
+                        .font(isNearbySheetExpanded ? .subheadline : .caption.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                 }
 
@@ -184,53 +174,12 @@ struct HomeView: View {
                         .foregroundStyle(SpotRelayTheme.badgeText)
                 }
 
-                Image(systemName: "chevron.up")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(SpotRelayTheme.textSecondary)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .glassPanel(
-            cornerRadius: 26,
-            tint: SpotRelayTheme.strongGlassTint,
-            stroke: SpotRelayTheme.glassStroke,
-            shadow: SpotRelayTheme.shadow,
-            shadowRadius: 22,
-            shadowY: 12
-        )
-    }
-
-    private var nearbySheet: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Nearby handoffs")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(SpotRelayTheme.textPrimary)
-
-                    Text(sheetSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(SpotRelayTheme.textSecondary)
-                }
-
-                Spacer()
-
-                Text("\(spotStore.nearbyActiveSpots.count)")
-                    .font(.subheadline.weight(.bold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(SpotRelayTheme.badgeFill, in: Capsule())
-                    .foregroundStyle(SpotRelayTheme.badgeText)
-
                 Button {
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                        isNearbySheetExpanded = false
+                        isNearbySheetExpanded.toggle()
                     }
                 } label: {
-                    Image(systemName: "chevron.down")
+                    Image(systemName: isNearbySheetExpanded ? "chevron.down" : "chevron.up")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                         .frame(width: 34, height: 34)
@@ -238,56 +187,78 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
             }
-
-            if spotStore.userCoordinate == nil {
-                locationPendingCard
-            } else if spotStore.nearbyActiveSpots.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Be the first to share your spot")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(SpotRelayTheme.textPrimary)
-
-                    Text("The fastest way to make the network useful is to seed the first handoff.")
-                        .font(.subheadline)
-                        .foregroundStyle(SpotRelayTheme.textSecondary)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard !isNearbySheetExpanded else { return }
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                    isNearbySheetExpanded = true
                 }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassPanel(cornerRadius: 24, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 14, shadowY: 8)
-            } else {
-                ForEach(spotStore.nearbyActiveSpots.prefix(3)) { signal in
-                    NearbySpotRow(signal: signal) {
-                        if signal.createdBy != spotStore.currentUser.id && signal.claimedBy != spotStore.currentUser.id {
-                            onSelectSpot(signal)
-                        } else {
-                            spotStore.activeHandoffID = signal.id
+            }
+
+            if isNearbySheetExpanded {
+                Group {
+                    if spotStore.userCoordinate == nil {
+                        locationPendingCard
+                    } else if spotStore.nearbyActiveSpots.isEmpty {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text("Be the first to share your spot")
+                                .font(.headline.weight(.semibold))
+                                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                            Text("The fastest way to make the network useful is to seed the first handoff.")
+                                .font(.subheadline)
+                                .foregroundStyle(SpotRelayTheme.textSecondary)
+                        }
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .glassPanel(cornerRadius: 24, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 14, shadowY: 8)
+                    } else {
+                        ForEach(spotStore.nearbyActiveSpots.prefix(3)) { signal in
+                            NearbySpotRow(signal: signal) {
+                                if signal.createdBy != spotStore.currentUser.id && signal.claimedBy != spotStore.currentUser.id {
+                                    onSelectSpot(signal)
+                                } else {
+                                    spotStore.activeHandoffID = signal.id
+                                }
+                            }
                         }
                     }
-                }
-            }
 
-            Button(action: primaryButtonAction) {
-                HStack {
-                    Image(systemName: spotStore.userCoordinate == nil ? "location.fill" : "arrowshape.turn.up.right.circle.fill")
-                    Text(spotStore.userCoordinate == nil ? "Use Current Location" : "Leaving Soon")
+                    Button(action: primaryButtonAction) {
+                        HStack {
+                            Image(systemName: spotStore.userCoordinate == nil ? "location.fill" : "arrowshape.turn.up.right.circle.fill")
+                            Text(spotStore.userCoordinate == nil ? "Use Current Location" : "Leaving Soon")
+                        }
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 18)
+                        .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .foregroundStyle(.white)
+                    }
+                    .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
                 }
-                .font(.headline.weight(.bold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .foregroundStyle(.white)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
         }
-        .padding(18)
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
+        .padding(.bottom, isNearbySheetExpanded ? 18 : 16)
         .glassPanel(
-            cornerRadius: 32,
+            cornerRadius: isNearbySheetExpanded ? 32 : 26,
             tint: SpotRelayTheme.strongGlassTint,
             stroke: SpotRelayTheme.glassStroke,
             shadow: SpotRelayTheme.shadow,
-            shadowRadius: 28,
-            shadowY: 14
+            shadowRadius: isNearbySheetExpanded ? 28 : 22,
+            shadowY: 12
         )
+    }
+
+    private var grabber: some View {
+        Capsule()
+            .fill(SpotRelayTheme.textSecondary.opacity(0.28))
+            .frame(width: 42, height: 5)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
     }
 
     private func focusMap() {
