@@ -28,8 +28,10 @@ struct AppView: View {
                 }
                 .sheet(isPresented: $showingPostSpotFlow) {
                     PostSpotFlowView()
-                        .presentationDetents([.fraction(0.52)])
-                        .presentationDragIndicator(.visible)
+                        .presentationDetents([.fraction(0.95)])
+                        //.presentationDragIndicator(.visible)
+                        //.presentationCornerRadius(32)
+                        //.presentationBackground(SpotRelayTheme.elevatedBackground)
                 }
                 .sheet(item: $selectedSpot) { spot in
                     SpotDetailSheet(
@@ -40,7 +42,9 @@ struct AppView: View {
                         }
                     )
                     .presentationDetents([.fraction(0.42)])
-                    .presentationDragIndicator(.visible)
+                    //.presentationDragIndicator(.visible)
+                    //.presentationCornerRadius(32)
+                    //.presentationBackground(SpotRelayTheme.elevatedBackground)
                 }
                 .fullScreenCover(isPresented: isShowingActiveHandoff) {
                     if let handoff = spotStore.activeHandoff {
@@ -56,4 +60,3 @@ struct AppView: View {
         .tint(SpotRelayTheme.primary)
     }
 }
-

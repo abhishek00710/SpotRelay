@@ -1,11 +1,13 @@
 import MapKit
 import SwiftUI
+import Combine
 
 struct HomeView: View {
     @EnvironmentObject private var spotStore: SpotStore
     let onLeaveSoon: () -> Void
     let onSelectSpot: (ParkingSpotSignal) -> Void
     @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var pendingRecenterOnLocationUpdate = true
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -16,42 +18,61 @@ struct HomeView: View {
         .background(SpotRelayTheme.background.ignoresSafeArea())
         .navigationBarHidden(true)
         .task {
+            spotStore.prepareLocationTracking(requestIfNeeded: false)
             focusMap()
         }
         .task {
             await spotStore.runRefreshLoop()
         }
+        .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
+            guard pendingRecenterOnLocationUpdate else { return }
+            focusMap()
+            pendingRecenterOnLocationUpdate = false
+        }
     }
 
     private var mapLayer: some View {
-        SizedMap(position: $cameraPosition) {
-            UserAnnotation()
+        ZStack(alignment: .topTrailing) {
+            SizedMap(position: $cameraPosition) {
+                UserAnnotation()
 
-            ForEach(spotStore.nearbyActiveSpots) { spot in
-                Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
-                    Button {
-                        if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
-                            onSelectSpot(spot)
-                        } else {
-                            spotStore.activeHandoffID = spot.id
+                ForEach(spotStore.nearbyActiveSpots) { spot in
+                    Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
+                        Button {
+                            if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
+                                onSelectSpot(spot)
+                            } else {
+                                spotStore.activeHandoffID = spot.id
+                            }
+                        } label: {
+                            SpotPinView(signal: spot)
                         }
-                    } label: {
-                        SpotPinView(signal: spot)
                     }
-                    .buttonStyle(.plain)
                 }
             }
+            .mapStyle(.standard(elevation: .flat))
+            .ignoresSafeArea()
+
+            MapRecenterButton {
+                recenterOnUser()
+            }
+            .padding(.top, 18)
+            .padding(.trailing, 16)
         }
-        .mapStyle(.standard(elevation: .flat))
-        .ignoresSafeArea()
     }
 
     private var overlayGradient: some View {
-        LinearGradient(
-            colors: [.clear, Color.black.opacity(0.16), Color.black.opacity(0.42)],
-            startPoint: .center,
-            endPoint: .bottom
-        )
+        ZStack {
+            LinearGradient(
+                colors: [.clear, SpotRelayTheme.mapOverlayMid, SpotRelayTheme.mapOverlayBottom],
+                startPoint: .center,
+                endPoint: .bottom
+            )
+
+            SpotRelayTheme.mapGlow
+                .blendMode(.plusLighter)
+                .opacity(0.9)
+        }
         .ignoresSafeArea()
     }
 
@@ -67,28 +88,54 @@ struct HomeView: View {
     }
 
     private var headerCard: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Live city parking")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .tracking(1.2)
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+
                 Text("SpotRelay")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
 
                 Text("Pass the spot. Skip the stress.")
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            Text("Downtown")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(.white.opacity(0.14), in: Capsule())
-                .foregroundStyle(.white)
+            VStack(alignment: .trailing, spacing: 10) {
+                Text("Downtown")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+
+                ZStack {
+                    Circle()
+                        .fill(SpotRelayTheme.orbGradient)
+                        .frame(width: 44, height: 44)
+                        .blur(radius: 0.5)
+
+                    Image(systemName: "arrow.trianglehead.swap")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            }
         }
-        .padding(18)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 30,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.shadow,
+            shadowRadius: 24,
+            shadowY: 12
+        )
     }
 
     private var nearbySheet: some View {
@@ -105,6 +152,13 @@ struct HomeView: View {
                 }
 
                 Spacer()
+
+                Text("\(spotStore.nearbyActiveSpots.count)")
+                    .font(.subheadline.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
             }
 
             if spotStore.nearbyActiveSpots.isEmpty {
@@ -119,7 +173,7 @@ struct HomeView: View {
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(SpotRelayTheme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .glassPanel(cornerRadius: 24, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 14, shadowY: 8)
             } else {
                 ForEach(spotStore.nearbyActiveSpots.prefix(3)) { signal in
                     NearbySpotRow(signal: signal) {
@@ -143,9 +197,17 @@ struct HomeView: View {
                 .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                 .foregroundStyle(.white)
             }
+            .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
         }
         .padding(18)
-        .background(SpotRelayTheme.panel, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .glassPanel(
+            cornerRadius: 32,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.shadow,
+            shadowRadius: 28,
+            shadowY: 14
+        )
     }
 
     private func focusMap() {
@@ -156,24 +218,36 @@ struct HomeView: View {
             )
         )
     }
+
+    private func recenterOnUser() {
+        pendingRecenterOnLocationUpdate = true
+        spotStore.prepareLocationTracking(requestIfNeeded: true)
+        focusMap()
+    }
 }
 
 private struct SpotPinView: View {
     let signal: ParkingSpotSignal
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             Text(signal.isActive ? signal.status.rawValue.capitalized : "Closed")
                 .font(.caption2.weight(.bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(.white, in: Capsule())
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(SpotRelayTheme.chrome, in: Capsule())
                 .foregroundStyle(pinColor)
 
-            Image(systemName: "mappin.circle.fill")
-                .font(.system(size: 30))
-                .foregroundStyle(.white, pinColor)
-                .shadow(color: .black.opacity(0.18), radius: 10, y: 6)
+            ZStack {
+                Circle()
+                    .fill(SpotRelayTheme.chrome)
+                    .frame(width: 18, height: 18)
+
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white, pinColor)
+            }
+            .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
         }
     }
 
@@ -197,11 +271,17 @@ private struct NearbySpotRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 12, height: 12)
+                ZStack {
+                    Circle()
+                        .fill(statusColor.opacity(0.14))
+                        .frame(width: 42, height: 42)
 
-                VStack(alignment: .leading, spacing: 4) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 10, height: 10)
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
                     Text("\(signal.minutesRemainingText) • \(signal.distanceMeters(from: spotStore.userCoordinate))m away")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
@@ -213,12 +293,15 @@ private struct NearbySpotRow: View {
 
                 Spacer()
 
-                Image(systemName: "chevron.right")
+                Text(signal.status == .posted ? "Open" : "Live")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
             }
             .padding(16)
-            .background(SpotRelayTheme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .glassPanel(cornerRadius: 24, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 14, shadowY: 8)
         }
         .buttonStyle(.plain)
     }
@@ -247,9 +330,15 @@ struct SpotDetailSheet: View {
                 .frame(width: 42, height: 5)
                 .frame(maxWidth: .infinity)
 
-            Text("Spot available")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(SpotRelayTheme.textPrimary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Spot available")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                Text("This handoff is still open right now. Claim it and the leaving driver will see you immediately.")
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+            }
 
             HStack(spacing: 12) {
                 detailChip(title: spot.minutesRemainingText, subtitle: "remaining")
@@ -257,13 +346,12 @@ struct SpotDetailSheet: View {
                 detailChip(title: "Live", subtitle: spot.statusLabel(for: spotStore.currentUser.id))
             }
 
-            Text("Claiming locks the spot for you and updates the leaving driver instantly.")
-                .font(.subheadline)
-                .foregroundStyle(SpotRelayTheme.textSecondary)
-
             Button(action: onClaim) {
-                Text("Claim Spot")
-                    .font(.headline.weight(.bold))
+                HStack {
+                    Image(systemName: "arrowshape.turn.up.right.circle.fill")
+                    Text("Claim Spot")
+                }
+                .font(.headline.weight(.bold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
                     .background(SpotRelayTheme.success, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -271,7 +359,7 @@ struct SpotDetailSheet: View {
             }
         }
         .padding(20)
-        .background(SpotRelayTheme.background)
+        //.background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
     }
 
     private func detailChip(title: String, subtitle: String) -> some View {
@@ -286,7 +374,7 @@ struct SpotDetailSheet: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SpotRelayTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .glassPanel(cornerRadius: 20, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 10, shadowY: 6)
     }
 }
 

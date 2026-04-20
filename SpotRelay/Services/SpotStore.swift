@@ -1,9 +1,10 @@
 import Foundation
 import MapKit
 import Combine
+import CoreLocation
 
 @MainActor
-final class SpotStore: ObservableObject {
+final class SpotStore: NSObject, ObservableObject {
     @Published private(set) var currentUser = AppUser(
         id: "current-user",
         displayName: "You",
@@ -12,7 +13,19 @@ final class SpotStore: ObservableObject {
     )
     @Published private(set) var spots: [ParkingSpotSignal] = DemoData.sampleSignals
     @Published private(set) var userCoordinate = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
+    @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var activeHandoffID: String?
+
+    private let locationManager = CLLocationManager()
+
+    override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        locationManager.distanceFilter = 10
+        locationAuthorizationStatus = locationManager.authorizationStatus
+        startLocationTrackingIfAuthorized()
+    }
 
     var activeHandoff: ParkingSpotSignal? {
         guard let activeHandoffID else { return nil }
@@ -32,6 +45,17 @@ final class SpotStore: ObservableObject {
         if activeHandoff.createdBy == currentUser.id { return .leaving }
         if activeHandoff.claimedBy == currentUser.id { return .arriving }
         return nil
+    }
+
+    var hasLocationAccess: Bool {
+        switch locationAuthorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            return true
+        case .notDetermined, .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
     }
 
     func refreshStatuses(now: Date = .now) {
@@ -59,13 +83,30 @@ final class SpotStore: ObservableObject {
         }
     }
 
+    func prepareLocationTracking(requestIfNeeded: Bool) {
+        locationAuthorizationStatus = locationManager.authorizationStatus
+
+        switch locationAuthorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            startLocationTrackingIfAuthorized()
+            locationManager.requestLocation()
+        case .notDetermined:
+            guard requestIfNeeded else { return }
+            locationManager.requestWhenInUseAuthorization()
+        case .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
     func postSpot(durationMinutes: Int) {
         let signal = ParkingSpotSignal(
             id: UUID().uuidString,
             createdBy: currentUser.id,
             claimedBy: nil,
-            latitude: userCoordinate.latitude + 0.0007,
-            longitude: userCoordinate.longitude - 0.0004,
+            latitude: userCoordinate.latitude,
+            longitude: userCoordinate.longitude,
             createdAt: .now,
             leavingAt: Calendar.current.date(byAdding: .minute, value: durationMinutes, to: .now) ?? .now,
             status: .posted
@@ -105,6 +146,32 @@ final class SpotStore: ObservableObject {
             currentUser.noShowCount += 1
         }
         self.activeHandoffID = nil
+    }
+
+    private func startLocationTrackingIfAuthorized() {
+        guard hasLocationAccess else { return }
+        if let coordinate = locationManager.location?.coordinate {
+            userCoordinate = coordinate
+        }
+        locationManager.startUpdatingLocation()
+    }
+}
+
+extension SpotStore: CLLocationManagerDelegate {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        locationAuthorizationStatus = manager.authorizationStatus
+        startLocationTrackingIfAuthorized()
+        if hasLocationAccess {
+            manager.requestLocation()
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let coordinate = locations.last?.coordinate else { return }
+        userCoordinate = coordinate
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
     }
 }
 
