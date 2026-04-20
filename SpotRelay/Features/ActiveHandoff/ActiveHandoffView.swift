@@ -209,7 +209,7 @@ struct ActiveHandoffView: View {
                 .foregroundStyle(SpotRelayTheme.textPrimary)
 
             statusLine("Spot state", value: liveSignal.statusLabel(for: spotStore.currentUser.id))
-            statusLine("Distance", value: "\(liveSignal.distanceMeters(from: spotStore.userCoordinate)) meters")
+            statusLine("Distance", value: liveSignal.distanceText(from: spotStore.userCoordinate))
             statusLine("Countdown", value: liveSignal.minutesRemainingText)
         }
         .padding(20)
@@ -283,9 +283,18 @@ struct ActiveHandoffView: View {
     }
 
     private func recenterOnUser() {
+        guard let coordinate = spotStore.userCoordinate else {
+            cameraPosition = .region(
+                MKCoordinateRegion(
+                    center: liveSignal.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
+                )
+            )
+            return
+        }
         cameraPosition = .region(
             MKCoordinateRegion(
-                center: spotStore.userCoordinate,
+                center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
             )
         )

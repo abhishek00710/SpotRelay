@@ -134,7 +134,7 @@ struct PostSpotFlowView: View {
 
                 Spacer()
 
-                Text("Live")
+                Text(spotStore.userCoordinate == nil ? "Waiting" : "Live")
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
@@ -142,20 +142,42 @@ struct PostSpotFlowView: View {
                     .foregroundStyle(SpotRelayTheme.badgeText)
             }
 
-            ZStack(alignment: .topTrailing) {
-                SizedMap(position: $cameraPosition) {
-                    UserAnnotation()
-                }
-                .frame(height: 190)
-                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .mapStyle(.standard(elevation: .flat))
+            if spotStore.userCoordinate == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("We’ll use your live position the moment it’s available.")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
 
-                MapRecenterButton {
-                    pendingRecenterOnLocationUpdate = true
-                    spotStore.prepareLocationTracking(requestIfNeeded: true)
-                    recenterOnUser()
+                    Button {
+                        pendingRecenterOnLocationUpdate = true
+                        spotStore.prepareLocationTracking(requestIfNeeded: true)
+                    } label: {
+                        HStack {
+                            Image(systemName: "location.fill")
+                            Text("Enable Current Location")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.primary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .padding(14)
+                .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
+            } else {
+                ZStack(alignment: .topTrailing) {
+                    SizedMap(position: $cameraPosition) {
+                        UserAnnotation()
+                    }
+                    .frame(height: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .mapStyle(.standard(elevation: .flat))
+
+                    MapRecenterButton {
+                        pendingRecenterOnLocationUpdate = true
+                        spotStore.prepareLocationTracking(requestIfNeeded: true)
+                        recenterOnUser()
+                    }
+                    .padding(14)
+                }
             }
         }
         .padding(20)
@@ -164,12 +186,13 @@ struct PostSpotFlowView: View {
 
     private var shareButton: some View {
         Button {
-            spotStore.postSpot(durationMinutes: selectedMinutes)
-            dismiss()
+            if spotStore.postSpot(durationMinutes: selectedMinutes) {
+                dismiss()
+            }
         } label: {
             HStack {
-                Image(systemName: "arrowshape.turn.up.right.circle.fill")
-                Text("Share My Spot")
+                Image(systemName: spotStore.userCoordinate == nil ? "location.fill" : "arrowshape.turn.up.right.circle.fill")
+                Text(spotStore.userCoordinate == nil ? "Waiting for Location" : "Share My Spot")
             }
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
@@ -178,13 +201,19 @@ struct PostSpotFlowView: View {
             .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
+        .disabled(spotStore.userCoordinate == nil)
+        .opacity(spotStore.userCoordinate == nil ? 0.6 : 1)
         .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
     }
 
     private func recenterOnUser() {
+        guard let coordinate = spotStore.userCoordinate else {
+            cameraPosition = .automatic
+            return
+        }
         cameraPosition = .region(
             MKCoordinateRegion(
-                center: spotStore.userCoordinate,
+                center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
             )
         )

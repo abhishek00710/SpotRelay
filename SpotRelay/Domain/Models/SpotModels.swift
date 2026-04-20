@@ -39,6 +39,23 @@ extension ParkingSpotSignal {
         return Int(origin.distance(from: destination).rounded())
     }
 
+    func distanceMeters(from coordinate: CLLocationCoordinate2D?) -> Int? {
+        guard let coordinate else { return nil }
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let destination = CLLocation(latitude: latitude, longitude: longitude)
+        return Int(origin.distance(from: destination).rounded())
+    }
+
+    func distanceText(from coordinate: CLLocationCoordinate2D?) -> String {
+        guard let meters = distanceMeters(from: coordinate) else { return "Locating you" }
+        return "\(meters)m away"
+    }
+
+    func distanceValue(from coordinate: CLLocationCoordinate2D?) -> String {
+        guard let meters = distanceMeters(from: coordinate) else { return "--" }
+        return "\(meters)m"
+    }
+
     func statusLabel(for currentUserID: String) -> String {
         switch status {
         case .posted:

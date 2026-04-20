@@ -11,12 +11,15 @@ final class SpotStore: NSObject, ObservableObject {
         successfulHandoffs: 12,
         noShowCount: 1
     )
-    @Published private(set) var spots: [ParkingSpotSignal] = DemoData.sampleSignals
-    @Published private(set) var userCoordinate = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
+    @Published private(set) var spots: [ParkingSpotSignal] = []
+    @Published private(set) var userCoordinate: CLLocationCoordinate2D?
+    @Published private(set) var currentAreaLabel = "Nearby"
     @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var activeHandoffID: String?
 
     private let locationManager = CLLocationManager()
+    private var hasSeededPreviewSpots = false
+    private var lastGeocodedLocation: CLLocation?
 
     override init() {
         super.init()
@@ -33,6 +36,7 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     var nearbyActiveSpots: [ParkingSpotSignal] {
+        guard let userCoordinate else { return [] }
         return spots
             .filter(\.isActive)
             .sorted { lhs, rhs in
@@ -100,7 +104,10 @@ final class SpotStore: NSObject, ObservableObject {
         }
     }
 
-    func postSpot(durationMinutes: Int) {
+    @discardableResult
+    func postSpot(durationMinutes: Int) -> Bool {
+        guard let userCoordinate else { return false }
+
         let signal = ParkingSpotSignal(
             id: UUID().uuidString,
             createdBy: currentUser.id,
@@ -114,6 +121,7 @@ final class SpotStore: NSObject, ObservableObject {
 
         spots.insert(signal, at: 0)
         activeHandoffID = signal.id
+        return true
     }
 
     func claimSpot(id: String) {
@@ -151,27 +159,73 @@ final class SpotStore: NSObject, ObservableObject {
     private func startLocationTrackingIfAuthorized() {
         guard hasLocationAccess else { return }
         if let coordinate = locationManager.location?.coordinate {
-            userCoordinate = coordinate
+            setUserCoordinate(coordinate)
         }
         locationManager.startUpdatingLocation()
+    }
+
+    private func setUserCoordinate(_ coordinate: CLLocationCoordinate2D) {
+        userCoordinate = coordinate
+        seedPreviewSpotsIfNeeded(around: coordinate)
+        refreshAreaLabelIfNeeded(for: coordinate)
+    }
+
+    private func seedPreviewSpotsIfNeeded(around coordinate: CLLocationCoordinate2D) {
+        guard !hasSeededPreviewSpots, spots.isEmpty else { return }
+        spots = PreviewSignalSeed.signals(around: coordinate)
+        hasSeededPreviewSpots = true
+    }
+
+    private func refreshAreaLabelIfNeeded(for coordinate: CLLocationCoordinate2D) {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        if let lastGeocodedLocation, lastGeocodedLocation.distance(from: location) < 250 {
+            return
+        }
+
+        lastGeocodedLocation = location
+
+        Task {
+            do {
+                guard let request = MKReverseGeocodingRequest(location: location) else { return }
+                let mapItems = try await request.mapItems
+                guard let mapItem = mapItems.first else { return }
+
+                let label = mapItem.addressRepresentations?.cityName
+                    ?? mapItem.addressRepresentations?.cityWithContext
+                    ?? mapItem.address?.shortAddress
+                    ?? mapItem.name?.components(separatedBy: ",").first
+
+                if let label, !label.isEmpty {
+                    currentAreaLabel = label
+                } else {
+                    currentAreaLabel = "Nearby"
+                }
+            } catch {
+            }
+        }
     }
 }
 
 extension SpotStore: CLLocationManagerDelegate {
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        locationAuthorizationStatus = manager.authorizationStatus
-        startLocationTrackingIfAuthorized()
-        if hasLocationAccess {
-            manager.requestLocation()
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.locationAuthorizationStatus = manager.authorizationStatus
+            self.startLocationTrackingIfAuthorized()
+            if self.hasLocationAccess {
+                manager.requestLocation()
+            }
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let coordinate = locations.last?.coordinate else { return }
-        userCoordinate = coordinate
+        Task { @MainActor [weak self] in
+            self?.setUserCoordinate(coordinate)
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
     }
 }
 
@@ -180,37 +234,25 @@ enum HandoffRole {
     case arriving
 }
 
-enum DemoData {
-    static let sampleSignals: [ParkingSpotSignal] = [
-        ParkingSpotSignal(
-            id: "spot-1",
-            createdBy: "driver-a",
-            claimedBy: nil,
-            latitude: 37.7762,
-            longitude: -122.4171,
-            createdAt: .now.addingTimeInterval(-70),
-            leavingAt: .now.addingTimeInterval(125),
-            status: .posted
-        ),
-        ParkingSpotSignal(
-            id: "spot-2",
-            createdBy: "driver-b",
-            claimedBy: "driver-c",
-            latitude: 37.7731,
-            longitude: -122.4218,
-            createdAt: .now.addingTimeInterval(-120),
-            leavingAt: .now.addingTimeInterval(320),
-            status: .claimed
-        ),
-        ParkingSpotSignal(
-            id: "spot-3",
-            createdBy: "driver-d",
-            claimedBy: nil,
-            latitude: 37.7754,
-            longitude: -122.4147,
-            createdAt: .now.addingTimeInterval(-30),
-            leavingAt: .now.addingTimeInterval(560),
-            status: .posted
-        )
-    ]
+enum PreviewSignalSeed {
+    static func signals(around coordinate: CLLocationCoordinate2D) -> [ParkingSpotSignal] {
+        let seeds: [(id: String, createdBy: String, claimedBy: String?, latOffset: Double, lonOffset: Double, createdAgo: TimeInterval, leavingIn: TimeInterval, status: SpotStatus)] = [
+            ("spot-1", "driver-a", nil, 0.0008, -0.0005, 70, 125, .posted),
+            ("spot-2", "driver-b", "driver-c", -0.0011, 0.0009, 120, 320, .claimed),
+            ("spot-3", "driver-d", nil, 0.0005, 0.0014, 30, 560, .posted)
+        ]
+
+        return seeds.map { seed in
+            ParkingSpotSignal(
+                id: seed.id,
+                createdBy: seed.createdBy,
+                claimedBy: seed.claimedBy,
+                latitude: coordinate.latitude + seed.latOffset,
+                longitude: coordinate.longitude + seed.lonOffset,
+                createdAt: .now.addingTimeInterval(-seed.createdAgo),
+                leavingAt: .now.addingTimeInterval(seed.leavingIn),
+                status: seed.status
+            )
+        }
+    }
 }

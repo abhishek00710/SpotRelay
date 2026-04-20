@@ -32,33 +32,25 @@ struct HomeView: View {
     }
 
     private var mapLayer: some View {
-        ZStack(alignment: .topTrailing) {
-            SizedMap(position: $cameraPosition) {
-                UserAnnotation()
+        SizedMap(position: $cameraPosition) {
+            UserAnnotation()
 
-                ForEach(spotStore.nearbyActiveSpots) { spot in
-                    Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
-                        Button {
-                            if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
-                                onSelectSpot(spot)
-                            } else {
-                                spotStore.activeHandoffID = spot.id
-                            }
-                        } label: {
-                            SpotPinView(signal: spot)
+            ForEach(spotStore.nearbyActiveSpots) { spot in
+                Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
+                    Button {
+                        if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
+                            onSelectSpot(spot)
+                        } else {
+                            spotStore.activeHandoffID = spot.id
                         }
+                    } label: {
+                        SpotPinView(signal: spot)
                     }
                 }
             }
-            .mapStyle(.standard(elevation: .flat))
-            .ignoresSafeArea()
-
-            MapRecenterButton {
-                recenterOnUser()
-            }
-            .padding(.top, 18)
-            .padding(.trailing, 16)
         }
+        .mapStyle(.standard(elevation: .flat))
+        .ignoresSafeArea()
     }
 
     private var overlayGradient: some View {
@@ -74,11 +66,19 @@ struct HomeView: View {
                 .opacity(0.9)
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private var content: some View {
         VStack(spacing: 16) {
             headerCard
+            HStack {
+                Spacer()
+                MapRecenterButton {
+                    recenterOnUser()
+                }
+            }
+            .padding(.horizontal, 4)
             Spacer()
             nearbySheet
         }
@@ -108,7 +108,7 @@ struct HomeView: View {
             Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text("Downtown")
+                Text(spotStore.userCoordinate == nil ? "Locating..." : spotStore.currentAreaLabel)
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
@@ -146,7 +146,7 @@ struct HomeView: View {
                         .font(.title3.weight(.bold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                    Text(spotStore.nearbyActiveSpots.isEmpty ? "Nothing nearby yet" : "Live signals updating around you")
+                    Text(sheetSubtitle)
                         .font(.subheadline)
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                 }
@@ -161,7 +161,9 @@ struct HomeView: View {
                     .foregroundStyle(SpotRelayTheme.badgeText)
             }
 
-            if spotStore.nearbyActiveSpots.isEmpty {
+            if spotStore.userCoordinate == nil {
+                locationPendingCard
+            } else if spotStore.nearbyActiveSpots.isEmpty {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Be the first to share your spot")
                         .font(.headline.weight(.semibold))
@@ -186,10 +188,10 @@ struct HomeView: View {
                 }
             }
 
-            Button(action: onLeaveSoon) {
+            Button(action: primaryButtonAction) {
                 HStack {
-                    Image(systemName: "arrowshape.turn.up.right.circle.fill")
-                    Text("Leaving Soon")
+                    Image(systemName: spotStore.userCoordinate == nil ? "location.fill" : "arrowshape.turn.up.right.circle.fill")
+                    Text(spotStore.userCoordinate == nil ? "Use Current Location" : "Leaving Soon")
                 }
                 .font(.headline.weight(.bold))
                 .frame(maxWidth: .infinity)
@@ -211,12 +213,48 @@ struct HomeView: View {
     }
 
     private func focusMap() {
+        guard let coordinate = spotStore.userCoordinate else {
+            cameraPosition = .automatic
+            return
+        }
         cameraPosition = .region(
             MKCoordinateRegion(
-                center: spotStore.userCoordinate,
+                center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.015, longitudeDelta: 0.015)
             )
         )
+    }
+
+    private var sheetSubtitle: String {
+        if spotStore.userCoordinate == nil {
+            return "We’ll show live handoffs as soon as we have your current location."
+        }
+        return spotStore.nearbyActiveSpots.isEmpty ? "Nothing nearby yet" : "Live signals updating around you"
+    }
+
+    private var locationPendingCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Finding your current location")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            Text("Location is required to center the map, sort nearby handoffs, and post your spot accurately.")
+                .font(.subheadline)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel(cornerRadius: 24, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 14, shadowY: 8)
+    }
+
+    private var primaryButtonAction: () -> Void {
+        {
+            if spotStore.userCoordinate == nil {
+                recenterOnUser()
+            } else {
+                onLeaveSoon()
+            }
+        }
     }
 
     private func recenterOnUser() {
@@ -282,7 +320,7 @@ private struct NearbySpotRow: View {
                 }
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("\(signal.minutesRemainingText) • \(signal.distanceMeters(from: spotStore.userCoordinate))m away")
+                    Text("\(signal.minutesRemainingText) • \(signal.distanceText(from: spotStore.userCoordinate))")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
@@ -342,7 +380,7 @@ struct SpotDetailSheet: View {
 
             HStack(spacing: 12) {
                 detailChip(title: spot.minutesRemainingText, subtitle: "remaining")
-                detailChip(title: "\(spot.distanceMeters(from: spotStore.userCoordinate))m", subtitle: "away")
+                detailChip(title: spot.distanceValue(from: spotStore.userCoordinate), subtitle: "away")
                 detailChip(title: "Live", subtitle: spot.statusLabel(for: spotStore.currentUser.id))
             }
 
