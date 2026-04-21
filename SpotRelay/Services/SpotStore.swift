@@ -54,6 +54,18 @@ final class SpotStore: NSObject, ObservableObject {
         return nil
     }
 
+    var currentUserLeavingSignal: ParkingSpotSignal? {
+        spots
+            .filter { $0.isActive && $0.createdBy == currentUser.id }
+            .sorted { lhs, rhs in
+                if lhs.leavingAt != rhs.leavingAt {
+                    return lhs.leavingAt < rhs.leavingAt
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+            .first
+    }
+
     var hasLocationAccess: Bool {
         switch locationAuthorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse:
@@ -63,6 +75,31 @@ final class SpotStore: NSObject, ObservableObject {
         @unknown default:
             return false
         }
+    }
+
+    func displayName(for userID: String?) -> String? {
+        guard let userID else { return nil }
+        if userID == currentUser.id {
+            return currentUser.displayName
+        }
+
+        let normalized = userID
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { segment in
+                let lowercased = segment.lowercased()
+                if lowercased == "driver" {
+                    return "Driver"
+                }
+                if lowercased.count == 1 {
+                    return lowercased.uppercased()
+                }
+                return lowercased.prefix(1).uppercased() + lowercased.dropFirst()
+            }
+            .joined(separator: " ")
+
+        return normalized.isEmpty ? "Nearby driver" : normalized
     }
 
     func refreshStatuses(now: Date = .now) {
@@ -110,6 +147,7 @@ final class SpotStore: NSObject, ObservableObject {
     @discardableResult
     func postSpot(durationMinutes: Int) -> Bool {
         guard let userCoordinate else { return false }
+        guard currentUserLeavingSignal == nil else { return false }
 
         let signal = ParkingSpotSignal(
             id: UUID().uuidString,

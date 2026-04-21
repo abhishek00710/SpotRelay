@@ -3,11 +3,12 @@ import SwiftUI
 import Combine
 
 struct ActiveHandoffView: View {
-    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var spotStore: SpotStore
     let signal: ParkingSpotSignal
+    let onClose: () -> Void
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = false
+    @State private var isMapVisible = true
 
     private var liveSignal: ParkingSpotSignal {
         spotStore.activeHandoff ?? signal
@@ -18,6 +19,7 @@ struct ActiveHandoffView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
+                    counterpartyPanel
                     liveMap
                     actionPanel
                     statusPanel
@@ -28,7 +30,9 @@ struct ActiveHandoffView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") {
-                        dismiss()
+                        dismissSafely {
+                            onClose()
+                        }
                     }
                 }
             }
@@ -49,7 +53,61 @@ struct ActiveHandoffView: View {
                 recenterOnUser()
                 pendingRecenterOnLocationUpdate = false
             }
+            .onChange(of: spotStore.activeHandoffID) { _, newValue in
+                if newValue == nil {
+                    isMapVisible = false
+                }
+            }
+            .onDisappear {
+                isMapVisible = false
+            }
         }
+    }
+
+    private var counterpartyPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(approachAccent.opacity(0.16))
+                        .frame(width: 48, height: 48)
+
+                    Image(systemName: panelSymbol)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(approachAccent)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(panelTitle)
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text(panelSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 12) {
+                detailPill(title: "Driver", value: counterpartyName)
+                detailPill(title: "Stage", value: approachStageTitle)
+            }
+
+            Text(approachStageDetail)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
     }
 
     private var heroCard: some View {
@@ -125,18 +183,24 @@ struct ActiveHandoffView: View {
             }
 
             ZStack(alignment: .topTrailing) {
-                SizedMap(position: $cameraPosition) {
-                    UserAnnotation()
+                if isMapVisible {
+                    SizedMap(position: $cameraPosition) {
+                        UserAnnotation()
 
-                    Annotation("Spot", coordinate: liveSignal.coordinate) {
-                        Image(systemName: "parkingsign.circle.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.white, SpotRelayTheme.primary)
+                        Annotation("Spot", coordinate: liveSignal.coordinate) {
+                            Image(systemName: "parkingsign.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundStyle(.white, SpotRelayTheme.primary)
+                        }
                     }
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .mapStyle(.standard(elevation: .flat))
+                } else {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(SpotRelayTheme.surface)
+                        .frame(height: 220)
                 }
-                .frame(height: 220)
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .mapStyle(.standard(elevation: .flat))
 
                 MapRecenterButton {
                     pendingRecenterOnLocationUpdate = true
@@ -166,8 +230,10 @@ struct ActiveHandoffView: View {
             }
 
             Button {
-                spotStore.cancelActiveHandoff()
-                dismiss()
+                dismissSafely {
+                    spotStore.cancelActiveHandoff()
+                    onClose()
+                }
             } label: {
                 actionButtonLabel(title: "Cancel", color: SpotRelayTheme.warning)
             }
@@ -175,16 +241,20 @@ struct ActiveHandoffView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    spotStore.completeActiveHandoff(success: true)
-                    dismiss()
+                    dismissSafely {
+                        spotStore.completeActiveHandoff(success: true)
+                        onClose()
+                    }
                 } label: {
                     completionButton(title: "Yes", icon: "hand.thumbsup.fill", color: SpotRelayTheme.success)
                 }
                 .buttonStyle(.plain)
 
                 Button {
-                    spotStore.completeActiveHandoff(success: false)
-                    dismiss()
+                    dismissSafely {
+                        spotStore.completeActiveHandoff(success: false)
+                        onClose()
+                    }
                 } label: {
                     completionButton(title: "No", icon: "hand.thumbsdown.fill", color: SpotRelayTheme.warning)
                 }
@@ -230,7 +300,7 @@ struct ActiveHandoffView: View {
     private var roleSubtitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
-            return "Stay visible while the arriving driver closes the gap."
+            return "Stay visible while the claimant closes the gap."
         case .arriving:
             return "Keep the leaving driver confident with a clear live arrival state."
         case .none:
@@ -282,6 +352,128 @@ struct ActiveHandoffView: View {
         .font(.subheadline)
     }
 
+    private func detailPill(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.bold))
+                .textCase(.uppercase)
+                .tracking(1.0)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var counterpartyName: String {
+        switch spotStore.currentUserRole {
+        case .leaving:
+            return spotStore.displayName(for: liveSignal.claimedBy) ?? "Waiting for claim"
+        case .arriving:
+            return spotStore.displayName(for: liveSignal.createdBy) ?? "Leaving driver"
+        case .none:
+            return spotStore.displayName(for: liveSignal.claimedBy) ?? "Nearby driver"
+        }
+    }
+
+    private var panelTitle: String {
+        switch spotStore.currentUserRole {
+        case .leaving:
+            return liveSignal.claimedBy == nil ? "Waiting for someone to claim" : "Someone claimed your spot"
+        case .arriving:
+            return "The leaving driver can see you"
+        case .none:
+            return "Live handoff confidence"
+        }
+    }
+
+    private var panelSubtitle: String {
+        switch spotStore.currentUserRole {
+        case .leaving:
+            return liveSignal.claimedBy == nil
+                ? "You’ll see the claimant here the moment another driver commits."
+                : "Clear claimant identity and arrival stage make the handoff feel safer."
+        case .arriving:
+            return "Keep your status updated so the other driver trusts the handoff."
+        case .none:
+            return "Identity and approach stage reduce uncertainty for both drivers."
+        }
+    }
+
+    private var approachStageTitle: String {
+        switch liveSignal.status {
+        case .posted:
+            return "Waiting"
+        case .claimed:
+            return spotStore.currentUserRole == .leaving ? "Claimed" : "On the way"
+        case .arriving:
+            return "Arriving"
+        case .completed:
+            return "Complete"
+        case .expired:
+            return "Expired"
+        case .cancelled:
+            return "Cancelled"
+        }
+    }
+
+    private var approachStageDetail: String {
+        switch liveSignal.status {
+        case .posted:
+            return "No driver has committed yet, so the spot is still open."
+        case .claimed:
+            if spotStore.currentUserRole == .leaving {
+                return "A nearby driver has claimed the spot. Once they update their arrival state, you’ll see that here immediately."
+            } else {
+                return "Your claim is live. The leaving driver now knows you’re coming."
+            }
+        case .arriving:
+            return "Arrival has been marked, so both sides have a clearer handoff moment."
+        case .completed:
+            return "The handoff is complete."
+        case .expired:
+            return "The countdown ran out before the handoff completed."
+        case .cancelled:
+            return "This handoff was cancelled."
+        }
+    }
+
+    private var panelSymbol: String {
+        switch liveSignal.status {
+        case .posted:
+            return "hourglass"
+        case .claimed:
+            return "person.crop.circle.badge.checkmark"
+        case .arriving:
+            return "location.fill.viewfinder"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .expired:
+            return "clock.badge.xmark.fill"
+        case .cancelled:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private var approachAccent: Color {
+        switch liveSignal.status {
+        case .posted:
+            return SpotRelayTheme.primary
+        case .claimed, .arriving:
+            return SpotRelayTheme.success
+        case .completed:
+            return SpotRelayTheme.success
+        case .expired, .cancelled:
+            return SpotRelayTheme.warning
+        }
+    }
+
     private func recenterOnUser() {
         guard let coordinate = spotStore.userCoordinate else {
             cameraPosition = .region(
@@ -298,5 +490,13 @@ struct ActiveHandoffView: View {
                 span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
             )
         )
+    }
+
+    private func dismissSafely(action: @escaping () -> Void) {
+        isMapVisible = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            action()
+        }
     }
 }

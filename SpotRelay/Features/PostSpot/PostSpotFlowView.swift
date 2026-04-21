@@ -8,6 +8,7 @@ struct PostSpotFlowView: View {
     @State private var selectedMinutes = 2
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = true
+    @State private var isMapVisible = true
 
     private let durations = [2, 5, 10]
 
@@ -31,6 +32,9 @@ struct PostSpotFlowView: View {
             guard pendingRecenterOnLocationUpdate else { return }
             recenterOnUser()
             pendingRecenterOnLocationUpdate = false
+        }
+        .onDisappear {
+            isMapVisible = false
         }
     }
 
@@ -164,12 +168,18 @@ struct PostSpotFlowView: View {
                 .frame(maxWidth: .infinity, minHeight: 190, alignment: .leading)
             } else {
                 ZStack(alignment: .topTrailing) {
-                    SizedMap(position: $cameraPosition) {
-                        UserAnnotation()
+                    if isMapVisible {
+                        SizedMap(position: $cameraPosition) {
+                            UserAnnotation()
+                        }
+                        .frame(height: 190)
+                        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                        .mapStyle(.standard(elevation: .flat))
+                    } else {
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(SpotRelayTheme.surface)
+                            .frame(height: 190)
                     }
-                    .frame(height: 190)
-                    .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                    .mapStyle(.standard(elevation: .flat))
 
                     MapRecenterButton {
                         pendingRecenterOnLocationUpdate = true
@@ -187,7 +197,7 @@ struct PostSpotFlowView: View {
     private var shareButton: some View {
         Button {
             if spotStore.postSpot(durationMinutes: selectedMinutes) {
-                dismiss()
+                dismissSafely()
             }
         } label: {
             HStack {
@@ -217,5 +227,13 @@ struct PostSpotFlowView: View {
                 span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
             )
         )
+    }
+
+    private func dismissSafely() {
+        isMapVisible = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            dismiss()
+        }
     }
 }
