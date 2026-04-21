@@ -212,62 +212,79 @@ struct HomeView: View {
     }
 
     private var expandedSheetBody: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                if spotStore.userCoordinate == nil {
-                    locationPendingCard
-                } else {
-                    handoffSection(
-                        title: "Handoff claims",
-                        subtitle: "Trying to get a parking",
-                        icon: "parkingsign.circle.fill",
-                        signals: claimSectionSignals,
-                        emptyTitle: "Nothing to claim yet",
-                        emptySubtitle: "Nearby posted spots and your active claims will appear here.",
-                        rowMode: .claim
-                    ) { signal in
-                        if signal.claimedBy == spotStore.currentUser.id {
-                            spotStore.activeHandoffID = signal.id
-                        } else {
-                            onSelectSpot(signal)
-                        }
-                    }
+        Group {
+            if isNearbySheetExpanded {
+                ViewThatFits(in: .vertical) {
+                    expandedSheetInlineContent
 
-                    if !locationSectionSignals.isEmpty {
-                        handoffSection(
-                            title: "Handoff location",
-                            subtitle: "Trying to give away my parking",
-                            icon: "location.circle.fill",
-                            signals: locationSectionSignals,
-                            emptyTitle: "No live handoff location",
-                            emptySubtitle: "When you post a leaving timer, your own handoff will show up here.",
-                            rowMode: .location
-                        ) { signal in
-                            spotStore.activeHandoffID = signal.id
-                        }
+                    ScrollView(showsIndicators: false) {
+                        expandedSheetContent
                     }
-                }
-
-                if locationSectionSignals.isEmpty {
-                    Button(action: primaryButtonAction) {
-                        HStack {
-                            Image(systemName: primaryButtonIconName)
-                            Text(primaryButtonTitle)
-                        }
-                        .font(.headline.weight(.bold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .foregroundStyle(.white)
-                    }
-                    .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
                 }
             }
         }
-        .frame(maxHeight: isNearbySheetExpanded ? expandedSheetMaxHeight : 0, alignment: .top)
+        .frame(maxHeight: isNearbySheetExpanded ? expandedSheetHeightLimit : 0, alignment: .top)
         .opacity(isNearbySheetExpanded ? 1 : 0)
         .allowsHitTesting(isNearbySheetExpanded)
         .clipped()
+    }
+
+    private var expandedSheetInlineContent: some View {
+        expandedSheetContent
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var expandedSheetContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if spotStore.userCoordinate == nil {
+                locationPendingCard
+            } else {
+                handoffSection(
+                    title: "Handoff claims",
+                    subtitle: "Trying to get a parking",
+                    icon: "parkingsign.circle.fill",
+                    signals: claimSectionSignals,
+                    emptyTitle: "Nothing to claim yet",
+                    emptySubtitle: "Nearby posted spots and your active claims will appear here.",
+                    rowMode: .claim
+                ) { signal in
+                    if signal.claimedBy == spotStore.currentUser.id {
+                        spotStore.activeHandoffID = signal.id
+                    } else {
+                        onSelectSpot(signal)
+                    }
+                }
+
+                if !locationSectionSignals.isEmpty {
+                    handoffSection(
+                        title: "Handoff location",
+                        subtitle: "Trying to give away my parking",
+                        icon: "location.circle.fill",
+                        signals: locationSectionSignals,
+                        emptyTitle: "No live handoff location",
+                        emptySubtitle: "When you post a leaving timer, your own handoff will show up here.",
+                        rowMode: .location
+                    ) { signal in
+                        spotStore.activeHandoffID = signal.id
+                    }
+                }
+            }
+
+            if locationSectionSignals.isEmpty {
+                Button(action: primaryButtonAction) {
+                    HStack {
+                        Image(systemName: primaryButtonIconName)
+                        Text(primaryButtonTitle)
+                    }
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                    .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .foregroundStyle(.white)
+                }
+                .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
+            }
+        }
     }
 
     private var grabber: some View {
@@ -350,15 +367,8 @@ struct HomeView: View {
         }
     }
 
-    private var expandedSheetMaxHeight: CGFloat {
-        let hasLocationSection = !locationSectionSignals.isEmpty
-        if spotStore.userCoordinate == nil {
-            return 180
-        }
-        if hasLocationSection {
-            return 420
-        }
-        return 340
+    private var expandedSheetHeightLimit: CGFloat {
+        420
     }
 
     private var primaryButtonTitle: String {
