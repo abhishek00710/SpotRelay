@@ -18,6 +18,7 @@ struct HomeView: View {
         }
         .background(SpotRelayTheme.background.ignoresSafeArea())
         .navigationBarHidden(true)
+        .spotRelayErrorBanner(using: spotStore)
         .task {
             spotStore.prepareLocationTracking(requestIfNeeded: false)
             focusMap(animated: false)
@@ -120,6 +121,18 @@ struct HomeView: View {
                     .padding(.vertical, 9)
                     .background(SpotRelayTheme.badgeFill, in: Capsule())
                     .foregroundStyle(SpotRelayTheme.badgeText)
+
+                Text(spotStore.backendMode.shortLabel)
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        spotStore.backendMode.isFirebase ? SpotRelayTheme.success.opacity(0.18) : SpotRelayTheme.warning.opacity(0.18),
+                        in: Capsule()
+                    )
+                    .foregroundStyle(
+                        spotStore.backendMode.isFirebase ? SpotRelayTheme.success : SpotRelayTheme.warning
+                    )
 
                 ZStack {
                     Circle()
@@ -708,6 +721,7 @@ struct SpotDetailSheet: View {
             }
         }
         .padding(20)
+        .spotRelayErrorBanner(using: spotStore)
         //.background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
     }
 

@@ -7,6 +7,13 @@ build/
 
 # SwiftPM
 .build/
+.swiftpm/
+Package.resolved
+
+# Firebase
+GoogleService-Info.plist
+.firebase/
+firebase-debug.log
 
 # macOS
 .DS_Store

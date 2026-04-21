@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isActiveLifecycleStatus(status) {
+      return status == 'posted' || status == 'claimed' || status == 'arriving';
+    }
+
+    function isSpotDocument(data) {
+      return data.keys().hasAll(['createdBy', 'latitude', 'longitude', 'createdAt', 'leavingAt', 'status']) &&
+        data.keys().hasOnly(['createdBy', 'claimedBy', 'latitude', 'longitude', 'createdAt', 'leavingAt', 'status']) &&
+        data.createdBy is string &&
+        data.latitude is number &&
+        data.longitude is number &&
+        data.createdAt is timestamp &&
+        data.leavingAt is timestamp &&
+        data.status is string;
+    }
+
+    function hasNoClaimant(data) {
+      return !data.keys().hasAny(['claimedBy']);
+    }
+
+    function hasSameClaimant(before, after) {
+      return (hasNoClaimant(before) && hasNoClaimant(after)) ||
+        (!hasNoClaimant(before) && !hasNoClaimant(after) && before.claimedBy == after.claimedBy);
+    }
+
+    function hasValidLocation(data) {
+      return data.latitude >= -90 && data.latitude <= 90 &&
+        data.longitude >= -180 && data.longitude <= 180;
+    }
+
+    function immutableSpotFieldsArePreserved() {
+      return request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.latitude == resource.data.latitude &&
+        request.resource.data.longitude == resource.data.longitude &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.leavingAt == resource.data.leavingAt;
+    }
+
+    function changedSpotFields() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function isCreateFromOwner() {
+      return isSpotDocument(request.resource.data) &&
+        request.resource.data.createdBy == request.auth.uid &&
+        hasNoClaimant(request.resource.data) &&
+        request.resource.data.status == 'posted' &&
+        request.resource.data.leavingAt > request.resource.data.createdAt &&
+        hasValidLocation(request.resource.data);
+    }
+
+    function isClaimTransition() {
+      return resource.data.status == 'posted' &&
+        request.resource.data.status == 'claimed' &&
+        hasNoClaimant(resource.data) &&
+        !hasNoClaimant(request.resource.data) &&
+        request.resource.data.claimedBy == request.auth.uid &&
+        request.auth.uid != resource.data.createdBy &&
+        changedSpotFields().hasOnly(['claimedBy', 'status']) &&
+        immutableSpotFieldsArePreserved();
+    }
+
+    function isArrivalTransition() {
+      return resource.data.status == 'claimed' &&
+        request.resource.data.status == 'arriving' &&
+        !hasNoClaimant(resource.data) &&
+        request.auth.uid == resource.data.claimedBy &&
+        hasSameClaimant(resource.data, request.resource.data) &&
+        changedSpotFields().hasOnly(['status']) &&
+        immutableSpotFieldsArePreserved();
+    }
+
+    function isCancelTransition() {
+      return isActiveLifecycleStatus(resource.data.status) &&
+        request.resource.data.status == 'cancelled' &&
+        (request.auth.uid == resource.data.createdBy ||
+          (!hasNoClaimant(resource.data) && request.auth.uid == resource.data.claimedBy)) &&
+        hasSameClaimant(resource.data, request.resource.data) &&
+        changedSpotFields().hasOnly(['status']) &&
+        immutableSpotFieldsArePreserved();
+    }
+
+    function isCompleteTransition() {
+      return isActiveLifecycleStatus(resource.data.status) &&
+        request.resource.data.status == 'completed' &&
+        (request.auth.uid == resource.data.createdBy ||
+          (!hasNoClaimant(resource.data) && request.auth.uid == resource.data.claimedBy)) &&
+        hasSameClaimant(resource.data, request.resource.data) &&
+        changedSpotFields().hasOnly(['status']) &&
+        immutableSpotFieldsArePreserved();
+    }
+
+    match /spots/{spotId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isCreateFromOwner();
+      allow update: if isSignedIn() &&
+        isSpotDocument(request.resource.data) &&
+        (isClaimTransition() ||
+          isArrivalTransition() ||
+          isCancelTransition() ||
+          isCompleteTransition());
+      allow delete: if false;
+    }
+  }
+}

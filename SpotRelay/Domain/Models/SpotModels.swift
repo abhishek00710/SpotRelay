@@ -33,6 +33,15 @@ enum SpotStatus: String, Codable, CaseIterable {
 }
 
 extension ParkingSpotSignal {
+    private var effectiveStatus: SpotStatus {
+        switch status {
+        case .posted, .claimed, .arriving:
+            return leavingAt <= .now ? .expired : status
+        case .completed, .expired, .cancelled:
+            return status
+        }
+    }
+
     func distanceMeters(from coordinate: CLLocationCoordinate2D) -> Int {
         let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         let destination = CLLocation(latitude: latitude, longitude: longitude)
@@ -57,7 +66,7 @@ extension ParkingSpotSignal {
     }
 
     func statusLabel(for currentUserID: String) -> String {
-        switch status {
+        switch effectiveStatus {
         case .posted:
             return "Available"
         case .claimed:
@@ -74,7 +83,7 @@ extension ParkingSpotSignal {
     }
 
     var isActive: Bool {
-        switch status {
+        switch effectiveStatus {
         case .posted, .claimed, .arriving:
             return true
         case .completed, .expired, .cancelled:

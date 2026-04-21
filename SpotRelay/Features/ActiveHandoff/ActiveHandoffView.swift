@@ -71,6 +71,7 @@ struct ActiveHandoffView: View {
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
             }
+            .spotRelayErrorBanner(using: spotStore)
         }
     }
 
@@ -239,7 +240,9 @@ struct ActiveHandoffView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    spotStore.markArrival()
+                    Task {
+                        _ = await spotStore.markArrival()
+                    }
                 } label: {
                     actionButtonLabel(title: "I'm Here", color: SpotRelayTheme.success)
                 }
@@ -247,9 +250,12 @@ struct ActiveHandoffView: View {
             }
 
             Button {
-                dismissSafely {
-                    spotStore.cancelActiveHandoff()
-                    onClose()
+                Task {
+                    if await spotStore.cancelActiveHandoff() {
+                        dismissSafely {
+                            onClose()
+                        }
+                    }
                 }
             } label: {
                 actionButtonLabel(title: "Cancel", color: SpotRelayTheme.warning)
@@ -258,9 +264,12 @@ struct ActiveHandoffView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    dismissSafely {
-                        spotStore.completeActiveHandoff(success: true)
-                        onClose()
+                    Task {
+                        if await spotStore.completeActiveHandoff(success: true) {
+                            dismissSafely {
+                                onClose()
+                            }
+                        }
                     }
                 } label: {
                     completionButton(title: "Yes", icon: "hand.thumbsup.fill", color: SpotRelayTheme.success)
@@ -268,9 +277,12 @@ struct ActiveHandoffView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    dismissSafely {
-                        spotStore.completeActiveHandoff(success: false)
-                        onClose()
+                    Task {
+                        if await spotStore.completeActiveHandoff(success: false) {
+                            dismissSafely {
+                                onClose()
+                            }
+                        }
                     }
                 } label: {
                     completionButton(title: "No", icon: "hand.thumbsdown.fill", color: SpotRelayTheme.warning)

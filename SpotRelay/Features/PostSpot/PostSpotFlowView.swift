@@ -33,6 +33,7 @@ struct PostSpotFlowView: View {
             recenterOnUser(animated: true)
             pendingRecenterOnLocationUpdate = false
         }
+        .spotRelayErrorBanner(using: spotStore)
         .onDisappear {
             isMapVisible = false
         }
@@ -196,8 +197,10 @@ struct PostSpotFlowView: View {
 
     private var shareButton: some View {
         Button {
-            if spotStore.postSpot(durationMinutes: selectedMinutes) {
-                dismissSafely()
+            Task {
+                if await spotStore.postSpot(durationMinutes: selectedMinutes) {
+                    dismissSafely()
+                }
             }
         } label: {
             HStack {

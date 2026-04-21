@@ -4,6 +4,7 @@ enum SpotRelayTheme {
     static let primary = Color(hex: 0x4B6BFF)
     static let accent = Color(hex: 0x22CDB4)
     static let success = Color(hex: 0x22C55E)
+    static let danger = Color.adaptive(light: 0xE65766, dark: 0xFF7B87)
     static let warning = Color(hex: 0xF59E0B)
     static let background = Color.adaptive(light: 0xF6F8FB, dark: 0x07111D)
     static let elevatedBackground = Color.adaptive(light: 0xFCFDFF, dark: 0x0C1626)

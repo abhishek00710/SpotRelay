@@ -11,7 +11,11 @@ SpotRelay is an iOS prototype for real-time parking spot handoffs in dense urban
 
 ## Current Status
 
-This repository is an early product prototype built with SwiftUI and MapKit. It currently uses local in-memory demo data so the core UX can be refined before backend and notification infrastructure are added.
+This repository is an early product prototype built with SwiftUI and MapKit. It now has a backend-ready architecture:
+
+- `LocalSpotRepository` keeps the app fully runnable with demo realtime data
+- `FirebaseSpotRepository` is scaffolded for Auth + Firestore
+- the UI still works without Firebase until you add your project configuration
 
 ## Tech Stack
 
@@ -36,10 +40,32 @@ SpotRelay/
 2. Select the `SpotRelay` scheme.
 3. Run on an iPhone simulator or device with iOS 18 or later.
 
+## Firebase Setup
+
+SpotRelay is ready to switch from the local repository to Firebase once the app is connected to a real Firebase project.
+
+1. In Firebase, create an Apple app that matches this bundle identifier:
+   `com.SAAAin.SpotRelay`
+2. Download `GoogleService-Info.plist`.
+3. Add the file to the `SpotRelay/SpotRelay` app target in Xcode.
+4. In Firebase Authentication, enable `Anonymous` sign-in.
+5. In Firestore, create a `spots` collection.
+6. Open the project in Xcode and let Swift Package Manager resolve:
+   - `FirebaseCore`
+   - `FirebaseAuth`
+   - `FirebaseFirestore`
+   - `FirebaseFirestoreSwift`
+7. Publish the repo's Firestore rules before testing multi-user handoffs:
+   - paste [firestore.rules](firestore.rules) into the Firestore Rules tab in Firebase Console, or
+   - deploy it with the Firebase CLI using `firebase deploy --only firestore:rules`
+
+When `GoogleService-Info.plist` is present and Firebase packages are resolved, the app will automatically prefer the Firebase-backed repository over the local demo repository.
+
+The current rules intentionally allow any authenticated SpotRelay user to read active handoffs, while write access is restricted to the driver participating in that handoff. Geographic filtering still happens in the app for now; if you later add geohash queries, you can tighten the read rules around those indexed fields too.
+
 ## Roadmap
 
-- Replace demo data with Firebase or Supabase
-- Add real location permissions and nearby filtering
+- Finish Firestore transactions and security rules
 - Add push notifications and claim expiry
 - Introduce reliability scoring and handoff history
 - Polish onboarding and empty/error states

@@ -1,35 +1,48 @@
-import Foundation
-import MapKit
 import Combine
 import CoreLocation
+import Foundation
+import MapKit
 
 @MainActor
 final class SpotStore: NSObject, ObservableObject {
     let nearbySearchRadiusMeters = 500
+    private let firebasePendingUserID = "firebase-auth-pending"
 
-    @Published private(set) var currentUser = AppUser(
-        id: "current-user",
-        displayName: "You",
-        successfulHandoffs: 12,
-        noShowCount: 1
-    )
+    @Published private(set) var currentUser: AppUser
     @Published private(set) var spots: [ParkingSpotSignal] = []
     @Published private(set) var userCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentAreaLabel = "Nearby"
     @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var activeHandoffID: String?
+    @Published var errorBanner: SpotRelayErrorBannerState?
+    let backendMode: SpotRelayBackendMode
 
+    private let repository: SpotRepository
+    private let userIdentity: UserIdentityProviding
     private let locationManager = CLLocationManager()
-    private var hasSeededPreviewSpots = false
+    private var cancellables = Set<AnyCancellable>()
     private var lastGeocodedLocation: CLLocation?
+    private var bannerDismissTask: Task<Void, Never>?
 
-    override init() {
+    init(repository: SpotRepository, userIdentity: UserIdentityProviding, backendMode: SpotRelayBackendMode) {
+        self.repository = repository
+        self.userIdentity = userIdentity
+        self.backendMode = backendMode
+        self.currentUser = userIdentity.currentUser
         super.init()
+
+        bindRepository()
+        bindUserIdentity()
+
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         locationManager.distanceFilter = 10
         locationAuthorizationStatus = locationManager.authorizationStatus
         startLocationTrackingIfAuthorized()
+
+        #if DEBUG
+        print("SpotRelay backend: \(backendMode.shortLabel) - \(backendMode.detail)")
+        #endif
     }
 
     var activeHandoff: ParkingSpotSignal? {
@@ -103,19 +116,7 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     func refreshStatuses(now: Date = .now) {
-        var didExpireActive = false
-        spots = spots.map { spot in
-            guard spot.isActive, now >= spot.leavingAt else { return spot }
-            if spot.id == activeHandoffID {
-                didExpireActive = true
-            }
-            var expired = spot
-            expired.status = .expired
-            return expired
-        }
-        if didExpireActive {
-            activeHandoffID = nil
-        }
+        repository.refreshStatuses(now: now)
     }
 
     func runRefreshLoop() async {
@@ -145,59 +146,153 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     @discardableResult
-    func postSpot(durationMinutes: Int) -> Bool {
-        guard let userCoordinate else { return false }
-        guard currentUserLeavingSignal == nil else { return false }
-
-        let signal = ParkingSpotSignal(
-            id: UUID().uuidString,
-            createdBy: currentUser.id,
-            claimedBy: nil,
-            latitude: userCoordinate.latitude,
-            longitude: userCoordinate.longitude,
-            createdAt: .now,
-            leavingAt: Calendar.current.date(byAdding: .minute, value: durationMinutes, to: .now) ?? .now,
-            status: .posted
-        )
-
-        spots.insert(signal, at: 0)
-        activeHandoffID = signal.id
-        return true
-    }
-
-    func claimSpot(id: String) {
-        refreshStatuses()
-        guard let index = spots.firstIndex(where: { $0.id == id }) else { return }
-        guard spots[index].status == .posted else { return }
-        if let userCoordinate, spots[index].distanceMeters(from: userCoordinate) > nearbySearchRadiusMeters {
-            return
+    func postSpot(durationMinutes: Int) async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+        guard let userCoordinate else {
+            presentBanner(
+                title: "Current location needed",
+                message: "We need your live location before we can share your spot."
+            )
+            return false
         }
-        spots[index].claimedBy = currentUser.id
-        spots[index].status = .claimed
-        activeHandoffID = id
-    }
 
-    func markArrival() {
-        guard let activeHandoffID, let index = spots.firstIndex(where: { $0.id == activeHandoffID }) else { return }
-        guard spots[index].claimedBy == currentUser.id else { return }
-        spots[index].status = .arriving
-    }
-
-    func cancelActiveHandoff() {
-        guard let activeHandoffID, let index = spots.firstIndex(where: { $0.id == activeHandoffID }) else { return }
-        spots[index].status = .cancelled
-        self.activeHandoffID = nil
-    }
-
-    func completeActiveHandoff(success: Bool) {
-        guard let activeHandoffID, let index = spots.firstIndex(where: { $0.id == activeHandoffID }) else { return }
-        spots[index].status = success ? .completed : .cancelled
-        if success {
-            currentUser.successfulHandoffs += 1
-        } else {
-            currentUser.noShowCount += 1
+        do {
+            let signal = try await repository.postSpot(
+                createdBy: currentUser.id,
+                coordinate: userCoordinate,
+                durationMinutes: durationMinutes,
+                now: .now
+            )
+            activeHandoffID = signal.id
+            clearErrorBanner()
+            return true
+        } catch {
+            presentRepositoryError(
+                error,
+                title: "Couldn't share your spot",
+                fallbackMessage: "Please try posting your handoff again in a moment."
+            )
+            return false
         }
-        self.activeHandoffID = nil
+    }
+
+    @discardableResult
+    func claimSpot(id: String) async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+        do {
+            let signal = try await repository.claimSpot(
+                id: id,
+                userID: currentUser.id,
+                userCoordinate: userCoordinate,
+                nearbySearchRadiusMeters: nearbySearchRadiusMeters,
+                now: .now
+            )
+            activeHandoffID = signal.id
+            clearErrorBanner()
+            return true
+        } catch {
+            presentRepositoryError(
+                error,
+                title: "Couldn't claim this handoff",
+                fallbackMessage: "That spot may already be taken or no longer nearby."
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func markArrival() async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+        guard let activeHandoffID else { return false }
+
+        do {
+            _ = try await repository.markArrival(id: activeHandoffID, userID: currentUser.id)
+            clearErrorBanner()
+            return true
+        } catch {
+            presentRepositoryError(
+                error,
+                title: "Couldn't update arrival",
+                fallbackMessage: "Please try marking your arrival again."
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func cancelActiveHandoff() async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+        guard let activeHandoffID else { return false }
+
+        do {
+            _ = try await repository.cancelHandoff(id: activeHandoffID, userID: currentUser.id)
+            self.activeHandoffID = nil
+            clearErrorBanner()
+            return true
+        } catch {
+            presentRepositoryError(
+                error,
+                title: "Couldn't cancel this handoff",
+                fallbackMessage: "Please try again in a moment."
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    func completeActiveHandoff(success: Bool) async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+        guard let activeHandoffID else { return false }
+
+        do {
+            _ = try await repository.completeHandoff(id: activeHandoffID, userID: currentUser.id, success: success)
+            currentUser = userIdentity.recordCompletedHandoff(success: success)
+            self.activeHandoffID = nil
+            clearErrorBanner()
+            return true
+        } catch {
+            presentRepositoryError(
+                error,
+                title: "Couldn't finish this handoff",
+                fallbackMessage: "Please try again before leaving the handoff."
+            )
+            return false
+        }
+    }
+
+    func clearErrorBanner() {
+        bannerDismissTask?.cancel()
+        errorBanner = nil
+    }
+
+    private func bindRepository() {
+        spots = repository.currentSpots
+
+        repository.spotsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] latestSpots in
+                self?.applyRepositorySpots(latestSpots)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func bindUserIdentity() {
+        userIdentity.currentUserPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] latestUser in
+                self?.currentUser = latestUser
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyRepositorySpots(_ latestSpots: [ParkingSpotSignal]) {
+        spots = latestSpots
+
+        guard let activeHandoffID else { return }
+        let stillActive = latestSpots.contains { $0.id == activeHandoffID && $0.isActive }
+        if !stillActive {
+            self.activeHandoffID = nil
+        }
     }
 
     private func startLocationTrackingIfAuthorized() {
@@ -210,14 +305,8 @@ final class SpotStore: NSObject, ObservableObject {
 
     private func setUserCoordinate(_ coordinate: CLLocationCoordinate2D) {
         userCoordinate = coordinate
-        seedPreviewSpotsIfNeeded(around: coordinate)
+        repository.seedPreviewSpotsIfNeeded(around: coordinate)
         refreshAreaLabelIfNeeded(for: coordinate)
-    }
-
-    private func seedPreviewSpotsIfNeeded(around coordinate: CLLocationCoordinate2D) {
-        guard !hasSeededPreviewSpots, spots.isEmpty else { return }
-        spots = PreviewSignalSeed.signals(around: coordinate)
-        hasSeededPreviewSpots = true
     }
 
     private func refreshAreaLabelIfNeeded(for coordinate: CLLocationCoordinate2D) {
@@ -248,6 +337,51 @@ final class SpotStore: NSObject, ObservableObject {
             }
         }
     }
+
+    private func presentRepositoryError(_ error: Error, title: String, fallbackMessage: String) {
+        presentBanner(
+            title: title,
+            message: userFacingMessage(for: error, fallback: fallbackMessage)
+        )
+    }
+
+    private func ensureReadyForMutation() -> Bool {
+        guard !(backendMode.isFirebase && currentUser.id == firebasePendingUserID) else {
+            presentBanner(
+                title: "Connecting to Firebase",
+                message: "Please wait a moment for your secure user session to finish connecting."
+            )
+            return false
+        }
+
+        return true
+    }
+
+    private func presentBanner(title: String, message: String) {
+        bannerDismissTask?.cancel()
+        errorBanner = SpotRelayErrorBannerState(title: title, message: message)
+        bannerDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.errorBanner = nil
+        }
+    }
+
+    private func userFacingMessage(for error: Error, fallback: String) -> String {
+        if let repositoryError = error as? SpotRepositoryError,
+           let description = repositoryError.errorDescription,
+           !description.isEmpty {
+            return description
+        }
+
+        let nsError = error as NSError
+        let description = nsError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !description.isEmpty, description != nsError.domain {
+            return description
+        }
+
+        return fallback
+    }
 }
 
 extension SpotStore: CLLocationManagerDelegate {
@@ -270,33 +404,16 @@ extension SpotStore: CLLocationManagerDelegate {
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
+        Task { @MainActor [weak self] in
+            self?.presentBanner(
+                title: "Location unavailable",
+                message: "We couldn't read your current location yet. Please try again in a moment."
+            )
+        }
     }
 }
 
 enum HandoffRole {
     case leaving
     case arriving
-}
-
-enum PreviewSignalSeed {
-    static func signals(around coordinate: CLLocationCoordinate2D) -> [ParkingSpotSignal] {
-        let seeds: [(id: String, createdBy: String, claimedBy: String?, latOffset: Double, lonOffset: Double, createdAgo: TimeInterval, leavingIn: TimeInterval, status: SpotStatus)] = [
-            ("spot-1", "driver-a", nil, 0.0008, -0.0005, 70, 125, .posted),
-            ("spot-2", "driver-b", "driver-c", -0.0011, 0.0009, 120, 320, .claimed),
-            ("spot-3", "driver-d", nil, 0.0005, 0.0014, 30, 560, .posted)
-        ]
-
-        return seeds.map { seed in
-            ParkingSpotSignal(
-                id: seed.id,
-                createdBy: seed.createdBy,
-                claimedBy: seed.claimedBy,
-                latitude: coordinate.latitude + seed.latOffset,
-                longitude: coordinate.longitude + seed.lonOffset,
-                createdAt: .now.addingTimeInterval(-seed.createdAgo),
-                leavingAt: .now.addingTimeInterval(seed.leavingIn),
-                status: seed.status
-            )
-        }
-    }
 }

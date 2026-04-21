@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F1A0B00126AA000100A10001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00526AA000100A10001 /* FirebaseAuth */; };
+		F1A0B00226AA000100A10001 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00626AA000100A10001 /* FirebaseCore */; };
+		F1A0B00326AA000100A10001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00726AA000100A10001 /* FirebaseFirestore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		0FC61A272F9587E10012DB84 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -40,6 +46,13 @@
 				Features/Home/HomeView.swift,
 				Features/Onboarding/OnboardingFlowView.swift,
 				Features/PostSpot/PostSpotFlowView.swift,
+				"GoogleService-Info.plist",
+				Services/Backend/FirebaseBootstrap.swift,
+				Services/Backend/FirebaseSpotRepository.swift,
+				Services/Backend/LocalSpotRepository.swift,
+				Services/Backend/LocalUserIdentityStore.swift,
+				Services/Backend/SpotRelayBackendFactory.swift,
+				Services/Backend/SpotRepository.swift,
 				Services/SessionStore.swift,
 				Services/SpotStore.swift,
 			);
@@ -55,6 +68,13 @@
 				Features/Home/HomeView.swift,
 				Features/Onboarding/OnboardingFlowView.swift,
 				Features/PostSpot/PostSpotFlowView.swift,
+				"GoogleService-Info.plist",
+				Services/Backend/FirebaseBootstrap.swift,
+				Services/Backend/FirebaseSpotRepository.swift,
+				Services/Backend/LocalSpotRepository.swift,
+				Services/Backend/LocalUserIdentityStore.swift,
+				Services/Backend/SpotRelayBackendFactory.swift,
+				Services/Backend/SpotRepository.swift,
 				Services/SessionStore.swift,
 				Services/SpotStore.swift,
 			);
@@ -89,6 +109,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F1A0B00126AA000100A10001 /* FirebaseAuth in Frameworks */,
+				F1A0B00226AA000100A10001 /* FirebaseCore in Frameworks */,
+				F1A0B00326AA000100A10001 /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -149,6 +172,9 @@
 			);
 			name = SpotRelay;
 			packageProductDependencies = (
+				F1A0B00526AA000100A10001 /* FirebaseAuth */,
+				F1A0B00626AA000100A10001 /* FirebaseCore */,
+				F1A0B00726AA000100A10001 /* FirebaseFirestore */,
 			);
 			productName = SpotRelay;
 			productReference = 0FC61A192F9587DF0012DB84 /* SpotRelay.app */;
@@ -232,6 +258,9 @@
 			);
 			mainGroup = 0FC61A102F9587DF0012DB84;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 0FC61A1A2F9587DF0012DB84 /* Products */;
 			projectDirPath = "";
@@ -435,12 +464,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R822Q76WSW;
-					ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
-					INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-					INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-					INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -468,12 +497,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R822Q76WSW;
-					ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
-					INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-					INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-					INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -617,6 +646,35 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.12.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F1A0B00526AA000100A10001 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		F1A0B00626AA000100A10001 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		F1A0B00726AA000100A10001 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0FC61A112F9587DF0012DB84 /* Project object */;
 }

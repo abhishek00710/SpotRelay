@@ -9,8 +9,23 @@ import SwiftUI
 
 @main
 struct SpotRelayApp: App {
-    @StateObject private var session = SessionStore()
-    @StateObject private var spotStore = SpotStore()
+    @StateObject private var session: SessionStore
+    @StateObject private var spotStore: SpotStore
+
+    init() {
+        let sessionStore = SessionStore()
+        let backendSelection = SpotRelayBackendFactory.makeBackend()
+        let userIdentity = SpotRelayBackendFactory.makeUserIdentityStore(for: backendSelection.mode)
+
+        _session = StateObject(wrappedValue: sessionStore)
+        _spotStore = StateObject(
+            wrappedValue: SpotStore(
+                repository: backendSelection.repository,
+                userIdentity: userIdentity,
+                backendMode: backendSelection.mode
+            )
+        )
+    }
 
     var body: some Scene {
         WindowGroup {

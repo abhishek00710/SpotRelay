@@ -28,8 +28,11 @@ struct AppView: View {
                     SpotDetailSheet(
                         spot: spot,
                         onClaim: {
-                            spotStore.claimSpot(id: spot.id)
-                            selectedSpot = nil
+                            Task {
+                                if await spotStore.claimSpot(id: spot.id) {
+                                    selectedSpot = nil
+                                }
+                            }
                         }
                     )
                     .presentationDetents([.fraction(0.42)])
