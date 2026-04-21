@@ -20,14 +20,14 @@ struct HomeView: View {
         .navigationBarHidden(true)
         .task {
             spotStore.prepareLocationTracking(requestIfNeeded: false)
-            focusMap()
+            focusMap(animated: false)
         }
         .task {
             await spotStore.runRefreshLoop()
         }
         .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
             guard pendingRecenterOnLocationUpdate else { return }
-            focusMap()
+            focusMap(animated: true)
             pendingRecenterOnLocationUpdate = false
         }
     }
@@ -295,16 +295,19 @@ struct HomeView: View {
             .contentShape(Rectangle())
     }
 
-    private func focusMap() {
+    private func focusMap(animated: Bool) {
         guard let coordinate = spotStore.userCoordinate else {
-            cameraPosition = .automatic
+            setCameraPosition(.automatic, animated: animated)
             return
         }
-        cameraPosition = .region(
+        setCameraPosition(
+            .region(
             MKCoordinateRegion(
                 center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.015, longitudeDelta: 0.015)
             )
+            ),
+            animated: animated
         )
     }
 
@@ -394,7 +397,17 @@ struct HomeView: View {
     private func recenterOnUser() {
         pendingRecenterOnLocationUpdate = true
         spotStore.prepareLocationTracking(requestIfNeeded: true)
-        focusMap()
+        focusMap(animated: true)
+    }
+
+    private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                cameraPosition = position
+            }
+        } else {
+            cameraPosition = position
+        }
     }
 
     private func toggleNearbySheet() {

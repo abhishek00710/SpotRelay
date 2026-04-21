@@ -1,6 +1,7 @@
 import MapKit
 import SwiftUI
 import Combine
+import UIKit
 
 struct ActiveHandoffView: View {
     @EnvironmentObject private var spotStore: SpotStore
@@ -9,6 +10,7 @@ struct ActiveHandoffView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = false
     @State private var isMapVisible = true
+    @State private var isShowingDirectionsOptions = false
 
     private var liveSignal: ParkingSpotSignal {
         spotStore.activeHandoff ?? signal
@@ -38,11 +40,14 @@ struct ActiveHandoffView: View {
             }
             .task {
                 spotStore.prepareLocationTracking(requestIfNeeded: false)
-                cameraPosition = .region(
+                setCameraPosition(
+                    .region(
                     MKCoordinateRegion(
                         center: liveSignal.coordinate,
                         span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
                     )
+                    ),
+                    animated: false
                 )
             }
             .task {
@@ -50,7 +55,7 @@ struct ActiveHandoffView: View {
             }
             .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
                 guard pendingRecenterOnLocationUpdate else { return }
-                recenterOnUser()
+                recenterOnUser(animated: true)
                 pendingRecenterOnLocationUpdate = false
             }
             .onChange(of: spotStore.activeHandoffID) { _, newValue in
@@ -60,6 +65,11 @@ struct ActiveHandoffView: View {
             }
             .onDisappear {
                 isMapVisible = false
+            }
+            .sheet(isPresented: $isShowingDirectionsOptions) {
+                directionsSheet
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -205,7 +215,7 @@ struct ActiveHandoffView: View {
                 MapRecenterButton {
                     pendingRecenterOnLocationUpdate = true
                     spotStore.prepareLocationTracking(requestIfNeeded: true)
-                    recenterOnUser()
+                    recenterOnUser(animated: true)
                 }
                 .padding(14)
             }
@@ -221,6 +231,13 @@ struct ActiveHandoffView: View {
                 .foregroundStyle(SpotRelayTheme.textPrimary)
 
             if spotStore.currentUserRole == .arriving {
+                Button {
+                    isShowingDirectionsOptions = true
+                } label: {
+                    secondaryActionButton(title: "Directions", icon: "arrow.triangle.turn.up.right.diamond.fill", color: SpotRelayTheme.primary)
+                }
+                .buttonStyle(.plain)
+
                 Button {
                     spotStore.markArrival()
                 } label: {
@@ -286,6 +303,48 @@ struct ActiveHandoffView: View {
         .glassPanel(cornerRadius: 26, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 12, shadowY: 6)
     }
 
+    private var directionsSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Open directions")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                Text("Choose how you want to navigate to the claimed handoff spot.")
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+            }
+
+            Button {
+                dismissDirectionsSheet {
+                    openAppleMapsDirections()
+                }
+            } label: {
+                directionOptionButton(title: "Apple Maps", icon: "map.fill", color: SpotRelayTheme.primary)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                dismissDirectionsSheet {
+                    openGoogleMapsDirections()
+                }
+            } label: {
+                directionOptionButton(title: "Google Maps", icon: "arrow.triangle.turn.up.right.diamond.fill", color: SpotRelayTheme.success)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                isShowingDirectionsOptions = false
+            } label: {
+                directionOptionButton(title: "Cancel", icon: "xmark", color: SpotRelayTheme.warning)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
+    }
+
     private var roleTitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
@@ -340,6 +399,38 @@ struct ActiveHandoffView: View {
         .foregroundStyle(color)
     }
 
+    private func secondaryActionButton(title: String, icon: String, color: Color) -> some View {
+        HStack {
+            Image(systemName: icon)
+            Text(title)
+        }
+        .font(.headline.weight(.bold))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(color)
+    }
+
+    private func directionOptionButton(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.headline.weight(.semibold))
+
+            Text(title)
+                .font(.headline.weight(.bold))
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.bold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(color)
+    }
+
     private func statusLine(_ label: String, value: String) -> some View {
         HStack {
             Text(label)
@@ -369,6 +460,83 @@ struct ActiveHandoffView: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func openAppleMapsDirections() {
+        let destination = MKMapItem(
+            location: CLLocation(
+                latitude: liveSignal.coordinate.latitude,
+                longitude: liveSignal.coordinate.longitude
+            ),
+            address: nil
+        )
+        destination.name = "SpotRelay Handoff Spot"
+
+        let launchOptions = [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ]
+
+        if let userCoordinate = spotStore.userCoordinate {
+            let source = MKMapItem(
+                location: CLLocation(
+                    latitude: userCoordinate.latitude,
+                    longitude: userCoordinate.longitude
+                ),
+                address: nil
+            )
+            source.name = "Current Location"
+            MKMapItem.openMaps(with: [source, destination], launchOptions: launchOptions)
+        } else {
+            destination.openInMaps(launchOptions: launchOptions)
+        }
+    }
+
+    private func openGoogleMapsDirections() {
+        let destinationValue = "\(liveSignal.coordinate.latitude),\(liveSignal.coordinate.longitude)"
+        let originValue = spotStore.userCoordinate.map { "\($0.latitude),\($0.longitude)" }
+
+        let appURLString: String
+        if let originValue {
+            appURLString = "comgooglemaps://?saddr=\(originValue)&daddr=\(destinationValue)&directionsmode=driving"
+        } else {
+            appURLString = "comgooglemaps://?daddr=\(destinationValue)&directionsmode=driving"
+        }
+
+        let fallbackURL = googleMapsWebURL(destination: destinationValue, origin: originValue)
+
+        guard let appURL = URL(string: appURLString) else {
+            UIApplication.shared.open(fallbackURL)
+            return
+        }
+
+        UIApplication.shared.open(appURL, options: [:]) { success in
+            guard !success else { return }
+            UIApplication.shared.open(fallbackURL)
+        }
+    }
+
+    private func googleMapsWebURL(destination: String, origin: String?) -> URL {
+        var components = URLComponents(string: "https://www.google.com/maps/dir/")!
+        var queryItems = [
+            URLQueryItem(name: "api", value: "1"),
+            URLQueryItem(name: "destination", value: destination),
+            URLQueryItem(name: "travelmode", value: "driving")
+        ]
+
+        if let origin {
+            queryItems.append(URLQueryItem(name: "origin", value: origin))
+        }
+
+        components.queryItems = queryItems
+        return components.url!
+    }
+
+    private func dismissDirectionsSheet(then action: @escaping () -> Void) {
+        isShowingDirectionsOptions = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            action()
+        }
     }
 
     private var counterpartyName: String {
@@ -474,21 +642,27 @@ struct ActiveHandoffView: View {
         }
     }
 
-    private func recenterOnUser() {
+    private func recenterOnUser(animated: Bool) {
         guard let coordinate = spotStore.userCoordinate else {
-            cameraPosition = .region(
+            setCameraPosition(
+                .region(
                 MKCoordinateRegion(
                     center: liveSignal.coordinate,
                     span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
                 )
+                ),
+                animated: animated
             )
             return
         }
-        cameraPosition = .region(
+        setCameraPosition(
+            .region(
             MKCoordinateRegion(
                 center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
             )
+            ),
+            animated: animated
         )
     }
 
@@ -497,6 +671,16 @@ struct ActiveHandoffView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             action()
+        }
+    }
+
+    private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                cameraPosition = position
+            }
+        } else {
+            cameraPosition = position
         }
     }
 }

@@ -25,12 +25,12 @@ struct PostSpotFlowView: View {
             .padding(20)
             .task {
                 spotStore.prepareLocationTracking(requestIfNeeded: false)
-                recenterOnUser()
+                recenterOnUser(animated: false)
             }
         }
         .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
             guard pendingRecenterOnLocationUpdate else { return }
-            recenterOnUser()
+            recenterOnUser(animated: true)
             pendingRecenterOnLocationUpdate = false
         }
         .onDisappear {
@@ -184,7 +184,7 @@ struct PostSpotFlowView: View {
                     MapRecenterButton {
                         pendingRecenterOnLocationUpdate = true
                         spotStore.prepareLocationTracking(requestIfNeeded: true)
-                        recenterOnUser()
+                        recenterOnUser(animated: true)
                     }
                     .padding(14)
                 }
@@ -216,16 +216,19 @@ struct PostSpotFlowView: View {
         .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
     }
 
-    private func recenterOnUser() {
+    private func recenterOnUser(animated: Bool) {
         guard let coordinate = spotStore.userCoordinate else {
-            cameraPosition = .automatic
+            setCameraPosition(.automatic, animated: animated)
             return
         }
-        cameraPosition = .region(
+        setCameraPosition(
+            .region(
             MKCoordinateRegion(
                 center: coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
             )
+            ),
+            animated: animated
         )
     }
 
@@ -234,6 +237,16 @@ struct PostSpotFlowView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             dismiss()
+        }
+    }
+
+    private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                cameraPosition = position
+            }
+        } else {
+            cameraPosition = position
         }
     }
 }
