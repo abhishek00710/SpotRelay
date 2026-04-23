@@ -5,6 +5,7 @@ import Combine
 struct PostSpotFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var spotStore: SpotStore
+    @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
     @State private var selectedMinutes = 2
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = true
@@ -199,6 +200,7 @@ struct PostSpotFlowView: View {
         Button {
             Task {
                 if await spotStore.postSpot(durationMinutes: selectedMinutes) {
+                    await parkingReminderStore.clearReminder()
                     dismissSafely()
                 }
             }

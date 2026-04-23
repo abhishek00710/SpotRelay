@@ -5,6 +5,7 @@ import MapKit
 @MainActor
 final class LocalSpotRepository: SpotRepository {
     @Published private var spots: [ParkingSpotSignal] = []
+    private let terminalRetentionInterval: TimeInterval = 60 * 60 * 6
     private var hasSeededPreviewSpots = false
 
     var spotsPublisher: AnyPublisher<[ParkingSpotSignal], Never> {
@@ -22,15 +23,21 @@ final class LocalSpotRepository: SpotRepository {
     }
 
     func refreshStatuses(now: Date) {
-        spots = spots.map { spot in
-            guard spot.isActive, now >= spot.leavingAt else { return spot }
-            var expired = spot
-            expired.status = .expired
-            return expired
-        }
+        spots = spots
+            .map { spot in
+                guard spot.isActive, now >= spot.leavingAt else { return spot }
+                var expired = spot
+                expired.status = .expired
+                return expired
+            }
+            .filter { spot in
+                spot.isActive || spot.leavingAt > now.addingTimeInterval(-terminalRetentionInterval)
+            }
     }
 
     func postSpot(createdBy: String, coordinate: CLLocationCoordinate2D, durationMinutes: Int, now: Date) async throws -> ParkingSpotSignal {
+        refreshStatuses(now: now)
+
         guard activeLeavingSignal(createdBy: createdBy) == nil else {
             throw SpotRepositoryError.activeLeavingSignalExists
         }
@@ -56,6 +63,15 @@ final class LocalSpotRepository: SpotRepository {
         guard let index = spots.firstIndex(where: { $0.id == id }) else {
             throw SpotRepositoryError.handoffNotFound
         }
+        guard spots[index].createdBy != userID else {
+            throw SpotRepositoryError.cannotClaimOwnSpot
+        }
+        guard activeClaimSignal(claimedBy: userID, excluding: id) == nil else {
+            throw SpotRepositoryError.activeClaimExists
+        }
+        if spots[index].claimedBy == userID, spots[index].status == .claimed {
+            return spots[index]
+        }
         guard spots[index].status == .posted else {
             throw SpotRepositoryError.spotUnavailable
         }
@@ -69,8 +85,13 @@ final class LocalSpotRepository: SpotRepository {
     }
 
     func markArrival(id: String, userID: String) async throws -> ParkingSpotSignal {
+        refreshStatuses(now: .now)
+
         guard let index = spots.firstIndex(where: { $0.id == id }) else {
             throw SpotRepositoryError.handoffNotFound
+        }
+        guard spots[index].isActive else {
+            throw SpotRepositoryError.spotUnavailable
         }
         guard spots[index].claimedBy == userID else {
             throw SpotRepositoryError.unauthorizedMutation
@@ -81,8 +102,13 @@ final class LocalSpotRepository: SpotRepository {
     }
 
     func cancelHandoff(id: String, userID: String) async throws -> ParkingSpotSignal {
+        refreshStatuses(now: .now)
+
         guard let index = spots.firstIndex(where: { $0.id == id }) else {
             throw SpotRepositoryError.handoffNotFound
+        }
+        guard spots[index].isActive else {
+            throw SpotRepositoryError.spotUnavailable
         }
         guard spots[index].createdBy == userID || spots[index].claimedBy == userID else {
             throw SpotRepositoryError.unauthorizedMutation
@@ -93,8 +119,13 @@ final class LocalSpotRepository: SpotRepository {
     }
 
     func completeHandoff(id: String, userID: String, success: Bool) async throws -> ParkingSpotSignal {
+        refreshStatuses(now: .now)
+
         guard let index = spots.firstIndex(where: { $0.id == id }) else {
             throw SpotRepositoryError.handoffNotFound
+        }
+        guard spots[index].isActive else {
+            throw SpotRepositoryError.spotUnavailable
         }
         guard spots[index].createdBy == userID || spots[index].claimedBy == userID else {
             throw SpotRepositoryError.unauthorizedMutation
@@ -106,6 +137,14 @@ final class LocalSpotRepository: SpotRepository {
 
     private func activeLeavingSignal(createdBy userID: String) -> ParkingSpotSignal? {
         spots.first { $0.isActive && $0.createdBy == userID }
+    }
+
+    private func activeClaimSignal(claimedBy userID: String, excluding excludedSpotID: String? = nil) -> ParkingSpotSignal? {
+        spots.first {
+            $0.isActive &&
+            $0.claimedBy == userID &&
+            $0.id != excludedSpotID
+        }
     }
 }
 

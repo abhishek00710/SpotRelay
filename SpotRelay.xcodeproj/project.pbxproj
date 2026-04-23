@@ -10,6 +10,7 @@
 		F1A0B00126AA000100A10001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00526AA000100A10001 /* FirebaseAuth */; };
 		F1A0B00226AA000100A10001 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00626AA000100A10001 /* FirebaseCore */; };
 		F1A0B00326AA000100A10001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00726AA000100A10001 /* FirebaseFirestore */; };
+		F1A0B00826AA000100A10001 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = F1A0B00926AA000100A10001 /* FirebaseMessaging */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,6 +54,10 @@
 				Services/Backend/LocalUserIdentityStore.swift,
 				Services/Backend/SpotRelayBackendFactory.swift,
 				Services/Backend/SpotRepository.swift,
+				Services/Notifications/PushNotificationStore.swift,
+				Services/Notifications/SpotRelayAppDelegate.swift,
+				Services/ParkingReminderStore.swift,
+				Services/SmartParkingStore.swift,
 				Services/SessionStore.swift,
 				Services/SpotStore.swift,
 			);
@@ -75,6 +80,10 @@
 				Services/Backend/LocalUserIdentityStore.swift,
 				Services/Backend/SpotRelayBackendFactory.swift,
 				Services/Backend/SpotRepository.swift,
+				Services/Notifications/PushNotificationStore.swift,
+				Services/Notifications/SpotRelayAppDelegate.swift,
+				Services/ParkingReminderStore.swift,
+				Services/SmartParkingStore.swift,
 				Services/SessionStore.swift,
 				Services/SpotStore.swift,
 			);
@@ -112,6 +121,7 @@
 				F1A0B00126AA000100A10001 /* FirebaseAuth in Frameworks */,
 				F1A0B00226AA000100A10001 /* FirebaseCore in Frameworks */,
 				F1A0B00326AA000100A10001 /* FirebaseFirestore in Frameworks */,
+				F1A0B00826AA000100A10001 /* FirebaseMessaging in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -175,6 +185,7 @@
 				F1A0B00526AA000100A10001 /* FirebaseAuth */,
 				F1A0B00626AA000100A10001 /* FirebaseCore */,
 				F1A0B00726AA000100A10001 /* FirebaseFirestore */,
+				F1A0B00926AA000100A10001 /* FirebaseMessaging */,
 			);
 			productName = SpotRelay;
 			productReference = 0FC61A192F9587DF0012DB84 /* SpotRelay.app */;
@@ -461,17 +472,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SpotRelay/SpotRelay.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R822Q76WSW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -494,17 +511,23 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = SpotRelay/SpotRelay.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = R822Q76WSW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -673,6 +696,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFirestore;
+		};
+		F1A0B00926AA000100A10001 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1A0B00426AA000100A10001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

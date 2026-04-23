@@ -4,9 +4,11 @@ import MapKit
 
 enum SpotRepositoryError: LocalizedError, Equatable {
     case activeLeavingSignalExists
+    case activeClaimExists
     case handoffNotFound
     case spotUnavailable
     case outsideNearbyRadius
+    case cannotClaimOwnSpot
     case unauthorizedMutation
     case backendNotConfigured
 
@@ -14,12 +16,16 @@ enum SpotRepositoryError: LocalizedError, Equatable {
         switch self {
         case .activeLeavingSignalExists:
             return "You already have a live leaving handoff."
+        case .activeClaimExists:
+            return "You already have an active claimed handoff."
         case .handoffNotFound:
             return "That handoff could not be found."
         case .spotUnavailable:
             return "That spot is no longer available."
         case .outsideNearbyRadius:
             return "That spot is outside the nearby claim radius."
+        case .cannotClaimOwnSpot:
+            return "You can't claim your own parking handoff."
         case .unauthorizedMutation:
             return "This handoff action is no longer allowed."
         case .backendNotConfigured:

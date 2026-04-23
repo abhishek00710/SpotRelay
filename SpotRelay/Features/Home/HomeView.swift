@@ -1,14 +1,19 @@
 import MapKit
 import SwiftUI
 import Combine
+import UserNotifications
 
 struct HomeView: View {
     @EnvironmentObject private var spotStore: SpotStore
+    @EnvironmentObject private var pushNotificationStore: PushNotificationStore
+    @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
+    @EnvironmentObject private var smartParkingStore: SmartParkingStore
     let onLeaveSoon: () -> Void
     let onSelectSpot: (ParkingSpotSignal) -> Void
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = true
     @State private var isNearbySheetExpanded = false
+    @State private var parkingReminderAlert: HomeViewAlert?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -30,6 +35,13 @@ struct HomeView: View {
             guard pendingRecenterOnLocationUpdate else { return }
             focusMap(animated: true)
             pendingRecenterOnLocationUpdate = false
+        }
+        .alert(item: $parkingReminderAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
         }
     }
 
@@ -79,10 +91,19 @@ struct HomeView: View {
     private var content: some View {
         VStack(spacing: 16) {
             headerCard
-            HStack {
-                Spacer()
-                MapRecenterButton {
-                    recenterOnUser()
+            VStack(spacing: 10) {
+                HStack {
+                    Spacer()
+                    MapRecenterButton {
+                        recenterOnUser()
+                    }
+                }
+
+                if shouldShowSmartParkingButton {
+                    HStack {
+                        Spacer()
+                        smartParkingButton
+                    }
                 }
             }
             .padding(.horizontal, 4)
@@ -92,6 +113,38 @@ struct HomeView: View {
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 12)
+    }
+
+    private var smartParkingButton: some View {
+        Button {
+            Task {
+                await handleSmartParkingTap()
+            }
+        } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+                .frame(width: 46, height: 46)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 18,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+        .accessibilityLabel("Set up smart parking")
+    }
+
+    private var shouldShowSmartParkingButton: Bool {
+        switch smartParkingStore.status {
+        case .disabled, .needsAlwaysLocation, .needsMotionAccess:
+            return true
+        case .monitoring, .unsupported:
+            return false
+        }
     }
 
     private var headerCard: some View {
@@ -122,27 +175,39 @@ struct HomeView: View {
                     .background(SpotRelayTheme.badgeFill, in: Capsule())
                     .foregroundStyle(SpotRelayTheme.badgeText)
 
-                Text(spotStore.backendMode.shortLabel)
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        spotStore.backendMode.isFirebase ? SpotRelayTheme.success.opacity(0.18) : SpotRelayTheme.warning.opacity(0.18),
-                        in: Capsule()
-                    )
-                    .foregroundStyle(
-                        spotStore.backendMode.isFirebase ? SpotRelayTheme.success : SpotRelayTheme.warning
-                    )
+                if pushNotificationStore.isAuthorizedForNotifications {
+                    ZStack {
+                        Circle()
+                            .fill(SpotRelayTheme.orbGradient)
+                            .frame(width: 44, height: 44)
+                            .blur(radius: 0.5)
 
-                ZStack {
-                    Circle()
-                        .fill(SpotRelayTheme.orbGradient)
-                        .frame(width: 44, height: 44)
-                        .blur(radius: 0.5)
+                        Image(systemName: "arrow.trianglehead.swap")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                } else {
+                    Button {
+                        if pushNotificationStore.authorizationStatus == .denied {
+                            pushNotificationStore.openSystemSettings()
+                        } else {
+                            Task {
+                                _ = await pushNotificationStore.requestAuthorization()
+                            }
+                        }
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(SpotRelayTheme.orbGradient)
+                                .frame(width: 44, height: 44)
+                                .blur(radius: 0.5)
 
-                    Image(systemName: "arrow.trianglehead.swap")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
+                            Image(systemName: pushNotificationStore.authorizationStatus == .denied ? "bell.slash.fill" : "bell.badge.fill")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -249,6 +314,10 @@ struct HomeView: View {
 
     private var expandedSheetContent: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let reminder = parkingReminderStore.activeReminder {
+                parkingReminderCard(reminder)
+            }
+
             if spotStore.userCoordinate == nil {
                 locationPendingCard
             } else {
@@ -306,6 +375,66 @@ struct HomeView: View {
             .frame(width: 42, height: 5)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
+    }
+
+    private func parkingReminderCard(_ reminder: ParkingReminderStore.Reminder) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(SpotRelayTheme.success.opacity(0.14))
+                        .frame(width: 40, height: 40)
+
+                    Image(systemName: "car.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(SpotRelayTheme.success)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Leaving reminder on")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text(reminder.areaSummary)
+                        .font(.subheadline)
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 12) {
+                Text("\(Int(reminder.radiusMeters))m radius")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task {
+                        await parkingReminderStore.clearReminder()
+                    }
+                } label: {
+                    Text("Clear")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.warning)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel(
+            cornerRadius: 24,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
     }
 
     private func focusMap(animated: Bool) {
@@ -491,6 +620,59 @@ struct HomeView: View {
         }
     }
 
+    private func handleSmartParkingTap() async {
+        if smartParkingStore.status == .monitoring {
+            smartParkingStore.disable()
+            return
+        }
+
+        let notificationsReady: Bool
+        switch pushNotificationStore.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            notificationsReady = true
+        case .notDetermined:
+            notificationsReady = await pushNotificationStore.requestAuthorization()
+        case .denied:
+            notificationsReady = false
+            parkingReminderAlert = HomeViewAlert(
+                title: "Notifications are off",
+                message: "Turn notifications on so SpotRelay can alert you when you're back near your parked car."
+            )
+        @unknown default:
+            notificationsReady = false
+        }
+
+        guard notificationsReady else { return }
+
+        await smartParkingStore.enable()
+        smartParkingStore.refreshPermissions()
+
+        switch smartParkingStore.status {
+        case .monitoring:
+            parkingReminderAlert = HomeViewAlert(
+                title: "Smart parking is on",
+                message: "SpotRelay will now look for likely parking stops and arm a return reminder automatically."
+            )
+        case .needsAlwaysLocation:
+            parkingReminderAlert = HomeViewAlert(
+                title: "Finish location setup",
+                message: "Choose Always Allow for SpotRelay so smart parking can keep working even when the app isn't open."
+            )
+        case .needsMotionAccess:
+            parkingReminderAlert = HomeViewAlert(
+                title: "Motion access needed",
+                message: "Allow Motion & Fitness for SpotRelay so it can tell when a drive has likely ended."
+            )
+        case .unsupported:
+            parkingReminderAlert = HomeViewAlert(
+                title: "Smart parking unavailable",
+                message: "This device doesn't expose the motion signals SpotRelay needs for automatic parked-spot detection."
+            )
+        case .disabled:
+            break
+        }
+    }
+
     private func handoffSection(
         title: String,
         subtitle: String,
@@ -560,6 +742,12 @@ struct HomeView: View {
             shadowY: 6
         )
     }
+}
+
+private struct HomeViewAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 private struct SpotPinView: View {

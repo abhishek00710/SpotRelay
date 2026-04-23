@@ -1,8 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct AppView: View {
     @EnvironmentObject private var session: SessionStore
     @EnvironmentObject private var spotStore: SpotStore
+    @EnvironmentObject private var pushNotificationStore: PushNotificationStore
+    @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
+    @EnvironmentObject private var smartParkingStore: SmartParkingStore
     @State private var showingPostSpotFlow = false
     @State private var selectedSpot: ParkingSpotSignal?
     @State private var showingActiveHandoff = false
@@ -92,6 +96,20 @@ struct AppView: View {
                 return
             }
             scheduleActiveHandoffPresentationIfPossible()
+        }
+        .task {
+            await parkingReminderStore.refreshReminderState()
+            smartParkingStore.refreshPermissions()
+            await pushNotificationStore.refreshAuthorizationStatus()
+            pushNotificationStore.registerForRemoteNotificationsIfAuthorized()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task {
+                await parkingReminderStore.refreshReminderState()
+                smartParkingStore.refreshPermissions()
+                await pushNotificationStore.refreshAuthorizationStatus()
+                pushNotificationStore.registerForRemoteNotificationsIfAuthorized()
+            }
         }
     }
 

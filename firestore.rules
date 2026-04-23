@@ -11,12 +11,13 @@ service cloud.firestore {
 
     function isSpotDocument(data) {
       return data.keys().hasAll(['createdBy', 'latitude', 'longitude', 'createdAt', 'leavingAt', 'status']) &&
-        data.keys().hasOnly(['createdBy', 'claimedBy', 'latitude', 'longitude', 'createdAt', 'leavingAt', 'status']) &&
+        data.keys().hasOnly(['createdBy', 'claimedBy', 'latitude', 'longitude', 'createdAt', 'leavingAt', 'cleanupAt', 'status']) &&
         data.createdBy is string &&
         data.latitude is number &&
         data.longitude is number &&
         data.createdAt is timestamp &&
         data.leavingAt is timestamp &&
+        (!data.keys().hasAny(['cleanupAt']) || data.cleanupAt is timestamp) &&
         data.status is string;
     }
 
@@ -42,6 +43,20 @@ service cloud.firestore {
         request.resource.data.leavingAt == resource.data.leavingAt;
     }
 
+    function hasValidCleanupAt(data) {
+      return data.keys().hasAny(['cleanupAt']) &&
+        data.cleanupAt is timestamp &&
+        data.cleanupAt > data.createdAt;
+    }
+
+    function cleanupFieldIsPreserved() {
+      return (!resource.data.keys().hasAny(['cleanupAt']) &&
+          !request.resource.data.keys().hasAny(['cleanupAt'])) ||
+        (resource.data.keys().hasAny(['cleanupAt']) &&
+          request.resource.data.keys().hasAny(['cleanupAt']) &&
+          request.resource.data.cleanupAt == resource.data.cleanupAt);
+    }
+
     function changedSpotFields() {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
@@ -52,6 +67,7 @@ service cloud.firestore {
         hasNoClaimant(request.resource.data) &&
         request.resource.data.status == 'posted' &&
         request.resource.data.leavingAt > request.resource.data.createdAt &&
+        hasValidCleanupAt(request.resource.data) &&
         hasValidLocation(request.resource.data);
     }
 
@@ -63,6 +79,7 @@ service cloud.firestore {
         request.resource.data.claimedBy == request.auth.uid &&
         request.auth.uid != resource.data.createdBy &&
         changedSpotFields().hasOnly(['claimedBy', 'status']) &&
+        cleanupFieldIsPreserved() &&
         immutableSpotFieldsArePreserved();
     }
 
@@ -73,6 +90,7 @@ service cloud.firestore {
         request.auth.uid == resource.data.claimedBy &&
         hasSameClaimant(resource.data, request.resource.data) &&
         changedSpotFields().hasOnly(['status']) &&
+        cleanupFieldIsPreserved() &&
         immutableSpotFieldsArePreserved();
     }
 
@@ -83,6 +101,7 @@ service cloud.firestore {
           (!hasNoClaimant(resource.data) && request.auth.uid == resource.data.claimedBy)) &&
         hasSameClaimant(resource.data, request.resource.data) &&
         changedSpotFields().hasOnly(['status']) &&
+        cleanupFieldIsPreserved() &&
         immutableSpotFieldsArePreserved();
     }
 
@@ -93,7 +112,62 @@ service cloud.firestore {
           (!hasNoClaimant(resource.data) && request.auth.uid == resource.data.claimedBy)) &&
         hasSameClaimant(resource.data, request.resource.data) &&
         changedSpotFields().hasOnly(['status']) &&
+        cleanupFieldIsPreserved() &&
         immutableSpotFieldsArePreserved();
+    }
+
+    function isExpiryTransition() {
+      return isActiveLifecycleStatus(resource.data.status) &&
+        request.resource.data.status == 'expired' &&
+        request.time >= resource.data.leavingAt &&
+        hasSameClaimant(resource.data, request.resource.data) &&
+        changedSpotFields().hasOnly(['status']) &&
+        cleanupFieldIsPreserved() &&
+        immutableSpotFieldsArePreserved();
+    }
+
+    function isDeviceDocument(data, deviceId) {
+      return data.keys().hasAll([
+          'installationID',
+          'platform',
+          'bundleID',
+          'fcmToken',
+          'apnsToken',
+          'authorizationStatus',
+          'notificationsAuthorized',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'installationID',
+          'platform',
+          'bundleID',
+          'fcmToken',
+          'apnsToken',
+          'authorizationStatus',
+          'notificationsAuthorized',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.installationID is string &&
+        data.installationID == deviceId &&
+        data.platform is string &&
+        data.platform == 'ios' &&
+        data.bundleID is string &&
+        data.fcmToken is string &&
+        data.apnsToken is string &&
+        data.authorizationStatus is string &&
+        data.notificationsAuthorized is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp &&
+        data.updatedAt >= data.createdAt;
+    }
+
+    function immutableDeviceFieldsArePreserved() {
+      return request.resource.data.installationID == resource.data.installationID &&
+        request.resource.data.platform == resource.data.platform &&
+        request.resource.data.bundleID == resource.data.bundleID &&
+        request.resource.data.createdAt == resource.data.createdAt;
     }
 
     match /spots/{spotId} {
@@ -104,7 +178,20 @@ service cloud.firestore {
         (isClaimTransition() ||
           isArrivalTransition() ||
           isCancelTransition() ||
-          isCompleteTransition());
+          isCompleteTransition() ||
+          isExpiryTransition());
+      allow delete: if false;
+    }
+
+    match /users/{userId}/devices/{deviceId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
+        isDeviceDocument(request.resource.data, deviceId);
+      allow update: if isSignedIn() &&
+        request.auth.uid == userId &&
+        isDeviceDocument(request.resource.data, deviceId) &&
+        immutableDeviceFieldsArePreserved();
       allow delete: if false;
     }
   }
