@@ -22,7 +22,7 @@ struct ActiveHandoffView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
                     counterpartyPanel
-                    liveMap
+                    //liveMap
                     actionPanel
                     statusPanel
                 }

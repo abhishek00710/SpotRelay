@@ -47,7 +47,7 @@
 				Features/Home/HomeView.swift,
 				Features/Onboarding/OnboardingFlowView.swift,
 				Features/PostSpot/PostSpotFlowView.swift,
-				"GoogleService-Info.plist",
+				"GoogleService-Info.d.plist",
 				Services/Backend/FirebaseBootstrap.swift,
 				Services/Backend/FirebaseSpotRepository.swift,
 				Services/Backend/LocalSpotRepository.swift,
@@ -57,8 +57,8 @@
 				Services/Notifications/PushNotificationStore.swift,
 				Services/Notifications/SpotRelayAppDelegate.swift,
 				Services/ParkingReminderStore.swift,
-				Services/SmartParkingStore.swift,
 				Services/SessionStore.swift,
+				Services/SmartParkingStore.swift,
 				Services/SpotStore.swift,
 			);
 			target = 0FC61A252F9587E10012DB84 /* SpotRelayTests */;
@@ -73,7 +73,7 @@
 				Features/Home/HomeView.swift,
 				Features/Onboarding/OnboardingFlowView.swift,
 				Features/PostSpot/PostSpotFlowView.swift,
-				"GoogleService-Info.plist",
+				"GoogleService-Info.d.plist",
 				Services/Backend/FirebaseBootstrap.swift,
 				Services/Backend/FirebaseSpotRepository.swift,
 				Services/Backend/LocalSpotRepository.swift,
@@ -83,8 +83,8 @@
 				Services/Notifications/PushNotificationStore.swift,
 				Services/Notifications/SpotRelayAppDelegate.swift,
 				Services/ParkingReminderStore.swift,
-				Services/SmartParkingStore.swift,
 				Services/SessionStore.swift,
+				Services/SmartParkingStore.swift,
 				Services/SpotStore.swift,
 			);
 			target = 0FC61A2F2F9587E10012DB84 /* SpotRelayUITests */;
@@ -478,14 +478,14 @@
 				DEVELOPMENT_TEAM = R822Q76WSW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = location;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreenModern;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -517,14 +517,14 @@
 				DEVELOPMENT_TEAM = R822Q76WSW;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = location;
-				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreenModern;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;

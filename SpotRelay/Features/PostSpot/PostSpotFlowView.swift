@@ -17,21 +17,20 @@ struct PostSpotFlowView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 topHandle
-                heroPanel
                 durationPicker
-                locationPreview
+                //locationPreview
                 shareButton
                 Spacer(minLength: 0)
             }
             .padding(20)
             .task {
                 spotStore.prepareLocationTracking(requestIfNeeded: false)
-                recenterOnUser(animated: false)
+                focusOnShareLocation(animated: false)
             }
         }
         .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
             guard pendingRecenterOnLocationUpdate else { return }
-            recenterOnUser(animated: true)
+            focusOnShareLocation(animated: true)
             pendingRecenterOnLocationUpdate = false
         }
         .spotRelayErrorBanner(using: spotStore)
@@ -125,22 +124,32 @@ struct PostSpotFlowView: View {
         .glassPanel(cornerRadius: 28, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 16, shadowY: 8)
     }
 
+    private var shareCoordinate: CLLocationCoordinate2D? {
+        parkingReminderStore.savedParkedLocation?.coordinate ?? spotStore.userCoordinate
+    }
+
+    private var isUsingParkedLocation: Bool {
+        parkingReminderStore.savedParkedLocation != nil
+    }
+
     private var locationPreview: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Your current spot")
+                    Text(isUsingParkedLocation ? "Sharing from parked car" : "Sharing from live location")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                    Text("The handoff will publish from your live location.")
+                    Text(isUsingParkedLocation
+                         ? "Your saved parked location will be shared, which is usually more precise than your live position."
+                         : "The handoff will publish from your current live location.")
                         .font(.subheadline)
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                 }
 
                 Spacer()
 
-                Text(spotStore.userCoordinate == nil ? "Waiting" : "Live")
+                Text(shareCoordinate == nil ? "Waiting" : (isUsingParkedLocation ? "Parked" : "Live"))
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
@@ -148,9 +157,9 @@ struct PostSpotFlowView: View {
                     .foregroundStyle(SpotRelayTheme.badgeText)
             }
 
-            if spotStore.userCoordinate == nil {
+            if shareCoordinate == nil {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("We’ll use your live position the moment it’s available.")
+                    Text("We’ll use your parked location when smart parking saves one, or your live position once it’s available.")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
 
@@ -172,7 +181,15 @@ struct PostSpotFlowView: View {
                 ZStack(alignment: .topTrailing) {
                     if isMapVisible {
                         SizedMap(position: $cameraPosition) {
-                            UserAnnotation()
+                            if spotStore.userCoordinate != nil {
+                                UserAnnotation()
+                            }
+
+                            if let parkedLocation = parkingReminderStore.savedParkedLocation {
+                                Annotation("Parked car", coordinate: parkedLocation.coordinate) {
+                                    ParkedLocationBadgePin()
+                                }
+                            }
                         }
                         .frame(height: 190)
                         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -186,9 +203,26 @@ struct PostSpotFlowView: View {
                     MapRecenterButton {
                         pendingRecenterOnLocationUpdate = true
                         spotStore.prepareLocationTracking(requestIfNeeded: true)
-                        recenterOnUser(animated: true)
+                        focusOnShareLocation(animated: true)
                     }
                     .padding(14)
+                }
+
+                if isUsingParkedLocation, let parkedLocation = parkingReminderStore.savedParkedLocation {
+                    HStack(spacing: 10) {
+                        Label("Parked pin saved", systemImage: "parkingsign.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(SpotRelayTheme.badgeFill, in: Capsule())
+                            .foregroundStyle(SpotRelayTheme.badgeText)
+
+                        if let userCoordinate = spotStore.userCoordinate {
+                            Text("\(parkedLocation.coordinateDistanceText(from: userCoordinate)) from you")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(SpotRelayTheme.textSecondary)
+                        }
+                    }
                 }
             }
         }
@@ -199,15 +233,15 @@ struct PostSpotFlowView: View {
     private var shareButton: some View {
         Button {
             Task {
-                if await spotStore.postSpot(durationMinutes: selectedMinutes) {
+                if await spotStore.postSpot(durationMinutes: selectedMinutes, coordinateOverride: shareCoordinate) {
                     await parkingReminderStore.clearReminder()
                     dismissSafely()
                 }
             }
         } label: {
             HStack {
-                Image(systemName: spotStore.userCoordinate == nil ? "location.fill" : "arrowshape.turn.up.right.circle.fill")
-                Text(spotStore.userCoordinate == nil ? "Waiting for Location" : "Share My Spot")
+                Image(systemName: shareCoordinate == nil ? "location.fill" : (isUsingParkedLocation ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"))
+                Text(shareCoordinate == nil ? "Waiting for Location" : (isUsingParkedLocation ? "Share Parked Spot" : "Share My Spot"))
             }
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
@@ -216,13 +250,13 @@ struct PostSpotFlowView: View {
             .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
-        .disabled(spotStore.userCoordinate == nil)
-        .opacity(spotStore.userCoordinate == nil ? 0.6 : 1)
+        .disabled(shareCoordinate == nil)
+        .opacity(shareCoordinate == nil ? 0.6 : 1)
         .shadow(color: SpotRelayTheme.shadow, radius: 18, y: 10)
     }
 
-    private func recenterOnUser(animated: Bool) {
-        guard let coordinate = spotStore.userCoordinate else {
+    private func focusOnShareLocation(animated: Bool) {
+        guard let coordinate = shareCoordinate else {
             setCameraPosition(.automatic, animated: animated)
             return
         }
@@ -230,7 +264,7 @@ struct PostSpotFlowView: View {
             .region(
             MKCoordinateRegion(
                 center: coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+                span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
             )
             ),
             animated: animated
@@ -252,6 +286,30 @@ struct PostSpotFlowView: View {
             }
         } else {
             cameraPosition = position
+        }
+    }
+}
+
+private struct ParkedLocationBadgePin: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("Parked")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(SpotRelayTheme.chrome, in: Capsule())
+                .foregroundStyle(SpotRelayTheme.success)
+
+            ZStack {
+                Circle()
+                    .fill(SpotRelayTheme.chrome)
+                    .frame(width: 18, height: 18)
+
+                Image(systemName: "car.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white, SpotRelayTheme.success)
+            }
+            .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
         }
     }
 }

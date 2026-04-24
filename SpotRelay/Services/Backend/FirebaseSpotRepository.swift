@@ -121,7 +121,7 @@ final class FirebaseSpotRepository: SpotRepository {
                 }
 
                 let updatedPayload = payload.applyingClaim(by: userID)
-                transaction.setData(updatedPayload.dictionary, forDocument: reference)
+                transaction.updateData(updatedPayload.claimPatch, forDocument: reference)
                 return updatedPayload
             } catch {
                 errorPointer?.pointee = self.nsError(for: error)
@@ -180,7 +180,9 @@ final class FirebaseSpotRepository: SpotRepository {
         let result = try await database.runTransaction { transaction, errorPointer in
             do {
                 let payload = try self.fetchDocument(reference: reference, transaction: transaction)
-                let isParticipant = payload.createdBy == userID || payload.claimedBy == userID
+                let isOwner = payload.createdBy == userID
+                let isClaimant = payload.claimedBy == userID
+                let isParticipant = isOwner || isClaimant
                 if isParticipant && payload.status == .cancelled {
                     return payload
                 }
@@ -193,6 +195,12 @@ final class FirebaseSpotRepository: SpotRepository {
                 }
                 guard payload.isActive(at: now) else {
                     throw SpotRepositoryError.spotUnavailable
+                }
+
+                if isClaimant {
+                    let updatedPayload = payload.releasingClaim()
+                    transaction.updateData(updatedPayload.claimReleasePatch, forDocument: reference)
+                    return updatedPayload
                 }
 
                 let updatedPayload = payload.applyingStatus(.cancelled)
@@ -514,6 +522,20 @@ private struct FirestoreSpotDocument: Codable {
         ["status": status.rawValue]
     }
 
+    var claimPatch: [String: Any] {
+        [
+            "claimedBy": claimedBy as Any,
+            "status": status.rawValue
+        ]
+    }
+
+    var claimReleasePatch: [String: Any] {
+        [
+            "claimedBy": FieldValue.delete(),
+            "status": status.rawValue
+        ]
+    }
+
     func model(id: String) -> ParkingSpotSignal {
         ParkingSpotSignal(
             id: id,
@@ -555,6 +577,19 @@ private struct FirestoreSpotDocument: Codable {
             leavingAt: leavingAt,
             cleanupAt: cleanupAt,
             status: .claimed
+        )
+    }
+
+    func releasingClaim() -> FirestoreSpotDocument {
+        FirestoreSpotDocument(
+            createdBy: createdBy,
+            claimedBy: nil,
+            latitude: latitude,
+            longitude: longitude,
+            createdAt: createdAt,
+            leavingAt: leavingAt,
+            cleanupAt: cleanupAt,
+            status: .posted
         )
     }
 

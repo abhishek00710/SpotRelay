@@ -23,7 +23,7 @@ struct AppView: View {
                 }
                 .sheet(isPresented: $showingPostSpotFlow) {
                     PostSpotFlowView()
-                        .presentationDetents([.fraction(0.95)])
+                        .presentationDetents([.fraction(0.42)])
                         //.presentationDragIndicator(.visible)
                         //.presentationCornerRadius(32)
                         //.presentationBackground(SpotRelayTheme.elevatedBackground)

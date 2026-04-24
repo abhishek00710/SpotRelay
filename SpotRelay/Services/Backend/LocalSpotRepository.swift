@@ -114,7 +114,12 @@ final class LocalSpotRepository: SpotRepository {
             throw SpotRepositoryError.unauthorizedMutation
         }
 
-        spots[index].status = .cancelled
+        if spots[index].claimedBy == userID {
+            spots[index].claimedBy = nil
+            spots[index].status = .posted
+        } else {
+            spots[index].status = .cancelled
+        }
         return spots[index]
     }
 
@@ -150,10 +155,12 @@ final class LocalSpotRepository: SpotRepository {
 
 enum PreviewSignalSeed {
     static func signals(around coordinate: CLLocationCoordinate2D) -> [ParkingSpotSignal] {
+        // Temporary local-only mock handoffs for UI/demo testing.
+        // Remove this whole `seeds` array block later if you no longer want preview spots.
         let seeds: [(id: String, createdBy: String, claimedBy: String?, latOffset: Double, lonOffset: Double, createdAgo: TimeInterval, leavingIn: TimeInterval, status: SpotStatus)] = [
-            ("spot-1", "driver-a", nil, 0.0008, -0.0005, 70, 125, .posted),
-            ("spot-2", "driver-b", "driver-c", -0.0011, 0.0009, 120, 320, .claimed),
-            ("spot-3", "driver-d", nil, 0.0005, 0.0014, 30, 560, .posted)
+            ("mock-spot-1", "driver-a", nil, 0.0008, -0.0005, 70, 125, .posted),
+            ("mock-spot-2", "driver-b", "driver-c", -0.0011, 0.0009, 120, 320, .claimed),
+            ("mock-spot-3", "driver-d", nil, 0.0005, 0.0014, 30, 560, .posted)
         ]
 
         return seeds.map { seed in

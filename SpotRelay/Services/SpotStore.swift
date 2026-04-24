@@ -19,15 +19,22 @@ final class SpotStore: NSObject, ObservableObject {
 
     private let repository: SpotRepository
     private let userIdentity: UserIdentityProviding
+    private let parkingReminderStore: ParkingReminderStore
     private let locationManager = CLLocationManager()
     private var cancellables = Set<AnyCancellable>()
     private var lastGeocodedLocation: CLLocation?
     private var bannerDismissTask: Task<Void, Never>?
 
-    init(repository: SpotRepository, userIdentity: UserIdentityProviding, backendMode: SpotRelayBackendMode) {
+    init(
+        repository: SpotRepository,
+        userIdentity: UserIdentityProviding,
+        backendMode: SpotRelayBackendMode,
+        parkingReminderStore: ParkingReminderStore
+    ) {
         self.repository = repository
         self.userIdentity = userIdentity
         self.backendMode = backendMode
+        self.parkingReminderStore = parkingReminderStore
         self.currentUser = userIdentity.currentUser
         super.init()
 
@@ -77,6 +84,10 @@ final class SpotStore: NSObject, ObservableObject {
                 return lhs.createdAt > rhs.createdAt
             }
             .first
+    }
+
+    var preferredShareCoordinate: CLLocationCoordinate2D? {
+        parkingReminderStore.savedParkedLocation?.coordinate ?? userCoordinate
     }
 
     var hasLocationAccess: Bool {
@@ -146,12 +157,12 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     @discardableResult
-    func postSpot(durationMinutes: Int) async -> Bool {
+    func postSpot(durationMinutes: Int, coordinateOverride: CLLocationCoordinate2D? = nil) async -> Bool {
         guard ensureReadyForMutation() else { return false }
-        guard let userCoordinate else {
+        guard let coordinateToShare = coordinateOverride ?? preferredShareCoordinate else {
             presentBanner(
-                title: "Current location needed",
-                message: "We need your live location before we can share your spot."
+                title: "Share location needed",
+                message: "We need your parked location or live location before we can share your spot."
             )
             return false
         }
@@ -159,7 +170,7 @@ final class SpotStore: NSObject, ObservableObject {
         do {
             let signal = try await repository.postSpot(
                 createdBy: currentUser.id,
-                coordinate: userCoordinate,
+                coordinate: coordinateToShare,
                 durationMinutes: durationMinutes,
                 now: .now
             )

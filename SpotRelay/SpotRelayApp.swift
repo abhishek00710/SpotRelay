@@ -29,7 +29,8 @@ struct SpotRelayApp: App {
             wrappedValue: SpotStore(
                 repository: backendSelection.repository,
                 userIdentity: userIdentity,
-                backendMode: backendSelection.mode
+                backendMode: backendSelection.mode,
+                parkingReminderStore: parkingStore
             )
         )
         _pushNotificationStore = StateObject(wrappedValue: pushStore)

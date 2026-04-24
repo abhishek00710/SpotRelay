@@ -105,6 +105,17 @@ service cloud.firestore {
         immutableSpotFieldsArePreserved();
     }
 
+    function isClaimReleaseTransition() {
+      return (resource.data.status == 'claimed' || resource.data.status == 'arriving') &&
+        !hasNoClaimant(resource.data) &&
+        request.auth.uid == resource.data.claimedBy &&
+        request.resource.data.status == 'posted' &&
+        hasNoClaimant(request.resource.data) &&
+        changedSpotFields().hasOnly(['claimedBy', 'status']) &&
+        cleanupFieldIsPreserved() &&
+        immutableSpotFieldsArePreserved();
+    }
+
     function isCompleteTransition() {
       return isActiveLifecycleStatus(resource.data.status) &&
         request.resource.data.status == 'completed' &&
@@ -176,6 +187,7 @@ service cloud.firestore {
       allow update: if isSignedIn() &&
         isSpotDocument(request.resource.data) &&
         (isClaimTransition() ||
+          isClaimReleaseTransition() ||
           isArrivalTransition() ||
           isCancelTransition() ||
           isCompleteTransition() ||
