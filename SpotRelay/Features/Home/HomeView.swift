@@ -400,7 +400,7 @@ struct HomeView: View {
                 if !locationSectionSignals.isEmpty {
                     handoffSection(
                         title: "Handoff location",
-                        subtitle: "Trying to give away my parking",
+                        subtitle: "Sharing my spot",
                         icon: "location.circle.fill",
                         signals: locationSectionSignals,
                         emptyTitle: "No live handoff location",
