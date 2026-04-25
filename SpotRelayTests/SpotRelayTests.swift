@@ -52,4 +52,27 @@ final class SpotRelayTests: XCTestCase {
         XCTAssertEqual(cancelled.status, .cancelled)
         XCTAssertTrue(cancelled.createdBy == "owner")
     }
+
+    @MainActor
+    func testSuccessfulShareEarnsStarOnlyForLeavingDriver() {
+        let defaults = UserDefaults(suiteName: #function)!
+        defaults.removePersistentDomain(forName: #function)
+
+        let identityStore = LocalUserIdentityStore(defaults: defaults)
+
+        let arrivingResult = identityStore.recordCompletedHandoff(success: true, as: .arriving)
+        XCTAssertEqual(arrivingResult.successfulHandoffs, 1)
+        XCTAssertEqual(arrivingResult.successfulShares, 0)
+        XCTAssertEqual(arrivingResult.shareStars, 0)
+
+        let leavingResult = identityStore.recordCompletedHandoff(success: true, as: .leaving)
+        XCTAssertEqual(leavingResult.successfulHandoffs, 2)
+        XCTAssertEqual(leavingResult.successfulShares, 1)
+        XCTAssertEqual(leavingResult.shareStars, 1)
+
+        let failedLeavingResult = identityStore.recordCompletedHandoff(success: false, as: .leaving)
+        XCTAssertEqual(failedLeavingResult.successfulHandoffs, 2)
+        XCTAssertEqual(failedLeavingResult.successfulShares, 1)
+        XCTAssertEqual(failedLeavingResult.noShowCount, 1)
+    }
 }

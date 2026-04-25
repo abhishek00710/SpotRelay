@@ -29,15 +29,15 @@ struct ActiveHandoffView: View {
                 .padding(20)
             }
             .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") {
-                        dismissSafely {
-                            onClose()
-                        }
-                    }
-                }
-            }
+//            .toolbar {
+//                ToolbarItem(placement: .topBarTrailing) {
+//                    Button("Close") {
+//                        dismissSafely {
+//                            onClose()
+//                        }
+//                    }
+//                }
+//            }
             .task {
                 spotStore.prepareLocationTracking(requestIfNeeded: false)
                 setCameraPosition(

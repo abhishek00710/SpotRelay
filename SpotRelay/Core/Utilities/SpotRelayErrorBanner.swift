@@ -56,22 +56,67 @@ struct SpotRelayErrorBanner: View {
     }
 }
 
+private struct SpotRelayConnectivityBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(SpotRelayTheme.warning.opacity(0.16))
+                    .frame(width: 38, height: 38)
+
+                Image(systemName: "wifi.exclamationmark")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(SpotRelayTheme.warning)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("No internet connection")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                Text("SpotRelay won't be able to load live handoffs or complete claims until you're back online.")
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .glassPanel(
+            cornerRadius: 24,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.shadow,
+            shadowRadius: 18,
+            shadowY: 10
+        )
+    }
+}
+
 private struct SpotRelayErrorBannerModifier: ViewModifier {
     @ObservedObject var store: SpotStore
 
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
-                if let banner = store.errorBanner {
-                    SpotRelayErrorBanner(banner: banner) {
-                        store.clearErrorBanner()
+                VStack(spacing: 10) {
+                    if !store.isNetworkAvailable {
+                        SpotRelayConnectivityBanner()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+
+                    if let banner = store.errorBanner {
+                        SpotRelayErrorBanner(banner: banner) {
+                            store.clearErrorBanner()
+                        }
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
             .animation(.spring(response: 0.34, dampingFraction: 0.88), value: store.errorBanner?.id)
+            .animation(.spring(response: 0.34, dampingFraction: 0.88), value: store.isNetworkAvailable)
     }
 }
 

@@ -2,6 +2,7 @@ import Combine
 import CoreLocation
 import Foundation
 import MapKit
+import Network
 
 @MainActor
 final class SpotStore: NSObject, ObservableObject {
@@ -13,6 +14,7 @@ final class SpotStore: NSObject, ObservableObject {
     @Published private(set) var userCoordinate: CLLocationCoordinate2D?
     @Published private(set) var currentAreaLabel = "Nearby"
     @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
+    @Published private(set) var isNetworkAvailable = true
     @Published var activeHandoffID: String?
     @Published var errorBanner: SpotRelayErrorBannerState?
     let backendMode: SpotRelayBackendMode
@@ -21,6 +23,8 @@ final class SpotStore: NSObject, ObservableObject {
     private let userIdentity: UserIdentityProviding
     private let parkingReminderStore: ParkingReminderStore
     private let locationManager = CLLocationManager()
+    private let networkPathMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "com.spotrelay.network-monitor")
     private var cancellables = Set<AnyCancellable>()
     private var lastGeocodedLocation: CLLocation?
     private var bannerDismissTask: Task<Void, Never>?
@@ -46,10 +50,15 @@ final class SpotStore: NSObject, ObservableObject {
         locationManager.distanceFilter = 10
         locationAuthorizationStatus = locationManager.authorizationStatus
         startLocationTrackingIfAuthorized()
+        startNetworkMonitoring()
 
         #if DEBUG
         print("SpotRelay backend: \(backendMode.shortLabel) - \(backendMode.detail)")
         #endif
+    }
+
+    deinit {
+        networkPathMonitor.cancel()
     }
 
     var activeHandoff: ParkingSpotSignal? {
@@ -254,10 +263,11 @@ final class SpotStore: NSObject, ObservableObject {
     func completeActiveHandoff(success: Bool) async -> Bool {
         guard ensureReadyForMutation() else { return false }
         guard let activeHandoffID else { return false }
+        let roleAtCompletion = currentUserRole
 
         do {
             _ = try await repository.completeHandoff(id: activeHandoffID, userID: currentUser.id, success: success)
-            currentUser = userIdentity.recordCompletedHandoff(success: success)
+            currentUser = userIdentity.recordCompletedHandoff(success: success, as: roleAtCompletion)
             self.activeHandoffID = nil
             clearErrorBanner()
             return true
@@ -269,6 +279,10 @@ final class SpotStore: NSObject, ObservableObject {
             )
             return false
         }
+    }
+
+    func updateCurrentUserProfile(displayName: String, avatarJPEGData: Data?) {
+        currentUser = userIdentity.updateProfile(displayName: displayName, avatarJPEGData: avatarJPEGData)
     }
 
     func clearErrorBanner() {
@@ -357,6 +371,14 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     private func ensureReadyForMutation() -> Bool {
+        guard isNetworkAvailable else {
+            presentBanner(
+                title: "You're offline",
+                message: "SpotRelay needs internet for live spots, claims, profile updates, and real-time handoffs."
+            )
+            return false
+        }
+
         guard !(backendMode.isFirebase && currentUser.id == firebasePendingUserID) else {
             presentBanner(
                 title: "Connecting to Firebase",
@@ -392,6 +414,15 @@ final class SpotStore: NSObject, ObservableObject {
         }
 
         return fallback
+    }
+
+    private func startNetworkMonitoring() {
+        networkPathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                self?.isNetworkAvailable = path.status == .satisfied
+            }
+        }
+        networkPathMonitor.start(queue: networkMonitorQueue)
     }
 }
 

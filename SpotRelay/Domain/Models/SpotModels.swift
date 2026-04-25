@@ -4,8 +4,58 @@ import MapKit
 struct AppUser: Identifiable, Codable, Equatable {
     let id: String
     var displayName: String
+    var joinedAt: Date
     var successfulHandoffs: Int
+    var successfulShares: Int
     var noShowCount: Int
+    var avatarJPEGData: Data?
+}
+
+extension AppUser {
+    var totalResolvedHandoffs: Int {
+        successfulHandoffs + noShowCount
+    }
+
+    var shareStars: Int {
+        successfulShares
+    }
+
+    var reliabilityScore: Int {
+        guard totalResolvedHandoffs > 0 else { return 100 }
+        let score = Double(successfulHandoffs) / Double(totalResolvedHandoffs)
+        return Int((score * 100).rounded())
+    }
+
+    var trustTierTitle: String {
+        if shareStars >= 25 || reliabilityScore >= 98 {
+            return "Top trusted sharer"
+        }
+        if shareStars >= 10 || reliabilityScore >= 94 {
+            return "Trusted sharer"
+        }
+        if shareStars >= 3 || reliabilityScore >= 88 {
+            return "Reliable sharer"
+        }
+        return "New sharer"
+    }
+
+    var displayInitials: String {
+        let words = displayName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+
+        if words.isEmpty {
+            return "SR"
+        }
+
+        let initials = words
+            .prefix(2)
+            .compactMap { $0.first }
+            .map { String($0).uppercased() }
+            .joined()
+
+        return initials.isEmpty ? "SR" : initials
+    }
 }
 
 struct ParkingSpotSignal: Identifiable, Codable, Equatable {

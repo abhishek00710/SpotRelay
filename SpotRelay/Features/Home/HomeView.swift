@@ -15,6 +15,7 @@ struct HomeView: View {
     @State private var pendingRecenterOnLocationUpdate = true
     @State private var isNearbySheetExpanded = false
     @State private var isShowingParkedLocationSheet = false
+    @State private var isShowingProfileSheet = false
     @State private var parkingReminderAlert: HomeViewAlert?
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
@@ -56,6 +57,12 @@ struct HomeView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+        }
+        .sheet(isPresented: $isShowingProfileSheet) {
+            ProfileView()
+                .environmentObject(spotStore)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -163,6 +170,73 @@ struct HomeView: View {
         .accessibilityLabel("Set up smart parking")
     }
 
+    private var notificationButton: some View {
+        Button {
+            if pushNotificationStore.authorizationStatus == .denied {
+                pushNotificationStore.openSystemSettings()
+            } else {
+                Task {
+                    _ = await pushNotificationStore.requestAuthorization()
+                }
+            }
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(SpotRelayTheme.orbGradient)
+                    .frame(width: 44, height: 44)
+                    .blur(radius: 0.5)
+
+                Image(systemName: pushNotificationStore.authorizationStatus == .denied ? "bell.slash.fill" : "bell.badge.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Notification settings")
+    }
+
+    private var profileButton: some View {
+        Button {
+            isShowingProfileSheet = true
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let avatarJPEGData = spotStore.currentUser.avatarJPEGData,
+                       let avatarImage = UIImage(data: avatarJPEGData) {
+                        Image(uiImage: avatarImage)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        Circle()
+                            .fill(SpotRelayTheme.orbGradient)
+
+                        Text(spotStore.currentUser.displayInitials)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .strokeBorder(SpotRelayTheme.softStroke, lineWidth: 1.2)
+                )
+
+                if spotStore.currentUser.shareStars > 0 {
+                    Text("\(spotStore.currentUser.shareStars)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(SpotRelayTheme.warning, in: Capsule())
+                        .foregroundStyle(.white)
+                        .offset(x: 8, y: 6)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open profile")
+    }
+
     private var shouldShowSmartParkingButton: Bool {
         switch smartParkingStore.status {
         case .disabled, .needsAlwaysLocation, .needsMotionAccess:
@@ -200,39 +274,11 @@ struct HomeView: View {
                     .background(SpotRelayTheme.badgeFill, in: Capsule())
                     .foregroundStyle(SpotRelayTheme.badgeText)
 
-                if pushNotificationStore.isAuthorizedForNotifications {
-                    ZStack {
-                        Circle()
-                            .fill(SpotRelayTheme.orbGradient)
-                            .frame(width: 44, height: 44)
-                            .blur(radius: 0.5)
-
-                        Image(systemName: "arrow.trianglehead.swap")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
+                HStack(spacing: 10) {
+                    if !pushNotificationStore.isAuthorizedForNotifications {
+                        notificationButton
                     }
-                } else {
-                    Button {
-                        if pushNotificationStore.authorizationStatus == .denied {
-                            pushNotificationStore.openSystemSettings()
-                        } else {
-                            Task {
-                                _ = await pushNotificationStore.requestAuthorization()
-                            }
-                        }
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(SpotRelayTheme.orbGradient)
-                                .frame(width: 44, height: 44)
-                                .blur(radius: 0.5)
-
-                            Image(systemName: pushNotificationStore.authorizationStatus == .denied ? "bell.slash.fill" : "bell.badge.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.white)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    profileButton
                 }
             }
         }

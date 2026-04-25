@@ -44,12 +44,16 @@ struct AppView: View {
                     //.presentationCornerRadius(32)
                     //.presentationBackground(SpotRelayTheme.elevatedBackground)
                 }
-                .fullScreenCover(isPresented: $showingActiveHandoff) {
+                .sheet(isPresented: $showingActiveHandoff) {
+                    dismissActiveHandoff(clearSelection: true)
+                } content: {
                     if let handoff = spotStore.activeHandoff {
                         ActiveHandoffView(
                             signal: handoff,
                             onClose: { dismissActiveHandoff(clearSelection: true) }
                         )
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
                     } else {
                         Color.clear
                             .ignoresSafeArea()
