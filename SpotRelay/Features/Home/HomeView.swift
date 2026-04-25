@@ -16,6 +16,9 @@ struct HomeView: View {
     @State private var isNearbySheetExpanded = false
     @State private var isShowingParkedLocationSheet = false
     @State private var parkingReminderAlert: HomeViewAlert?
+    @State private var nearbySheetHeaderHeight: CGFloat = 0
+    @State private var expandedSheetContentHeight: CGFloat = 0
+    @GestureState private var nearbySheetDragTranslation: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -246,11 +249,49 @@ struct HomeView: View {
 
     private var nearbySheetContainer: some View {
         nearbySheet
-        .animation(.spring(response: 0.34, dampingFraction: 0.88), value: isNearbySheetExpanded)
+            .offset(y: nearbySheetDragOffset)
+            .animation(.spring(response: 0.34, dampingFraction: 0.88), value: isNearbySheetExpanded)
     }
 
     private var nearbySheet: some View {
         VStack(alignment: .leading, spacing: isNearbySheetExpanded ? 16 : 12) {
+            nearbySheetHeader
+
+            expandedSheetBody
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 12)
+        .padding(.bottom, isNearbySheetExpanded ? 18 : 16)
+        .frame(height: isNearbySheetExpanded ? expandedSheetRenderedTotalHeight : nil, alignment: .top)
+        .clipped()
+        .glassPanel(
+            cornerRadius: isNearbySheetExpanded ? 32 : 26,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.shadow,
+            shadowRadius: isNearbySheetExpanded ? 28 : 22,
+            shadowY: 12
+        )
+    }
+
+    private var expandedSheetBody: some View {
+        Group {
+            if isNearbySheetExpanded {
+                if shouldUseScrollableExpandedSheet {
+                    ScrollView(showsIndicators: false) {
+                        measuredExpandedSheetContent
+                    }
+                    .frame(height: expandedSheetViewportHeight, alignment: .top)
+                } else {
+                    measuredExpandedSheetContent
+                }
+            }
+        }
+        .clipped()
+    }
+
+    private var nearbySheetHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
             grabber
 
             HStack(spacing: 14) {
@@ -295,41 +336,34 @@ struct HomeView: View {
                 guard !isNearbySheetExpanded else { return }
                 expandNearbySheet()
             }
-
-            expandedSheetBody
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, isNearbySheetExpanded ? 18 : 16)
-        .glassPanel(
-            cornerRadius: isNearbySheetExpanded ? 32 : 26,
-            tint: SpotRelayTheme.strongGlassTint,
-            stroke: SpotRelayTheme.glassStroke,
-            shadow: SpotRelayTheme.shadow,
-            shadowRadius: isNearbySheetExpanded ? 28 : 22,
-            shadowY: 12
-        )
-    }
-
-    private var expandedSheetBody: some View {
-        Group {
-            if isNearbySheetExpanded {
-                if shouldUseScrollableExpandedSheet {
-                    ScrollView(showsIndicators: false) {
-                        expandedSheetContent
-                    }
-                    .frame(maxHeight: expandedSheetHeightLimit, alignment: .top)
-                } else {
-                    expandedSheetInlineContent
-                }
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: NearbySheetHeaderHeightPreferenceKey.self, value: proxy.size.height)
             }
+        )
+        .onPreferenceChange(NearbySheetHeaderHeightPreferenceKey.self) { newHeight in
+            let normalizedHeight = max(newHeight, 0)
+            guard abs(nearbySheetHeaderHeight - normalizedHeight) > 1 else { return }
+            nearbySheetHeaderHeight = normalizedHeight
         }
-        .transition(.move(edge: .top).combined(with: .opacity))
     }
 
-    private var expandedSheetInlineContent: some View {
+    private var measuredExpandedSheetContent: some View {
         expandedSheetContent
             .fixedSize(horizontal: false, vertical: true)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: ExpandedSheetContentHeightPreferenceKey.self, value: proxy.size.height)
+                }
+            )
+            .onPreferenceChange(ExpandedSheetContentHeightPreferenceKey.self) { newHeight in
+                let normalizedHeight = max(newHeight, 0)
+                guard abs(expandedSheetContentHeight - normalizedHeight) > 1 else { return }
+                expandedSheetContentHeight = normalizedHeight
+            }
     }
 
     private var expandedSheetContent: some View {
@@ -401,6 +435,8 @@ struct HomeView: View {
             .frame(width: 42, height: 5)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
+            .padding(.vertical, 6)
+            .gesture(nearbySheetGrabberGesture)
     }
 
     private func parkingReminderCard(_ reminder: ParkingReminderStore.Reminder) -> some View {
@@ -455,11 +491,11 @@ struct HomeView: View {
                         .background(SpotRelayTheme.badgeFill, in: Capsule())
                         .foregroundStyle(SpotRelayTheme.badgeText)
 
-                    Spacer(minLength: 0)
-
-                    Text("Details")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(SpotRelayTheme.primary)
+//                    Spacer(minLength: 0)
+//
+//                    Text("Details")
+//                        .font(.subheadline.weight(.semibold))
+//                        .foregroundStyle(SpotRelayTheme.primary)
                 }
             }
             .padding(18)
@@ -598,8 +634,27 @@ struct HomeView: View {
         420
     }
 
+    private var expandedSheetChromeHeight: CGFloat {
+        let topPadding: CGFloat = 12
+        let bottomPadding: CGFloat = isNearbySheetExpanded ? 18 : 16
+        let headerToBodySpacing: CGFloat = isNearbySheetExpanded ? 16 : 12
+        return nearbySheetHeaderHeight + topPadding + bottomPadding + headerToBodySpacing
+    }
+
+    private var expandedSheetBodyViewportLimit: CGFloat {
+        max(0, expandedSheetHeightLimit - expandedSheetChromeHeight)
+    }
+
+    private var expandedSheetViewportHeight: CGFloat {
+        min(expandedSheetContentHeight, expandedSheetBodyViewportLimit)
+    }
+
+    private var expandedSheetRenderedTotalHeight: CGFloat {
+        expandedSheetChromeHeight + expandedSheetViewportHeight
+    }
+
     private var shouldUseScrollableExpandedSheet: Bool {
-        groupedHandoffCount > 3 || (groupedHandoffCount > 2 && parkingReminderStore.savedParkedLocation != nil)
+        expandedSheetContentHeight > expandedSheetBodyViewportLimit + 1
     }
 
     private var primaryButtonTitle: String {
@@ -640,6 +695,41 @@ struct HomeView: View {
         } else {
             cameraPosition = position
         }
+    }
+
+    private var nearbySheetGrabberGesture: some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .local)
+            .updating($nearbySheetDragTranslation) { value, state, _ in
+                state = clampedNearbySheetDragTranslation(value.translation.height)
+            }
+            .onEnded { value in
+                let translation = value.translation.height
+                let threshold: CGFloat = 32
+
+                if translation < -threshold, !isNearbySheetExpanded {
+                    expandNearbySheet()
+                } else if translation > threshold, isNearbySheetExpanded {
+                    collapseNearbySheetIfNeeded()
+                }
+            }
+    }
+
+    private var nearbySheetDragOffset: CGFloat {
+        clampedNearbySheetDragTranslation(nearbySheetDragTranslation)
+    }
+
+    private func clampedNearbySheetDragTranslation(_ translation: CGFloat) -> CGFloat {
+        if isNearbySheetExpanded {
+            if translation > 0 {
+                return min(translation, 54)
+            }
+            return max(translation * 0.18, -10)
+        }
+
+        if translation < 0 {
+            return max(translation, -54)
+        }
+        return min(translation * 0.18, 10)
     }
 
     private func toggleNearbySheet() {
@@ -863,6 +953,22 @@ struct HomeView: View {
         case .pausedNeedsAlwaysLocation, .monitoringUnavailable:
             return SpotRelayTheme.warning
         }
+    }
+}
+
+private struct ExpandedSheetContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct NearbySheetHeaderHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
