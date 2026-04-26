@@ -7,24 +7,19 @@ struct ProfileView: View {
     @EnvironmentObject private var spotStore: SpotStore
     @State private var draftDisplayName = ""
     @State private var draftAvatarJPEGData: Data?
+    @State private var draftAvatarPreviewImage: UIImage?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var hasLoadedDrafts = false
     @State private var avatarProcessingError: String?
-    @State private var isEditingName = false
-    @FocusState private var isNameFieldFocused: Bool
+    @State private var isShowingNameEditor = false
+    @State private var nameEditorText = ""
+    @State private var baselineDisplayName = "You"
+    @State private var baselineAvatarSignature = 0
+    @State private var draftAvatarSignature = 0
+    @FocusState private var isNameEditorFieldFocused: Bool
 
     private var user: AppUser {
         spotStore.currentUser
-    }
-
-    private var avatarImage: UIImage? {
-        guard let avatarJPEGData = user.avatarJPEGData else { return nil }
-        return UIImage(data: avatarJPEGData)
-    }
-
-    private var draftAvatarImage: UIImage? {
-        guard let draftAvatarJPEGData else { return nil }
-        return UIImage(data: draftAvatarJPEGData)
     }
 
     private var memberSinceText: String {
@@ -68,7 +63,7 @@ struct ProfileView: View {
     private var isProfileDirty: Bool {
         let sanitizedDraftName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveDraftName = sanitizedDraftName.isEmpty ? "You" : sanitizedDraftName
-        return effectiveDraftName != user.displayName || draftAvatarJPEGData != user.avatarJPEGData
+        return effectiveDraftName != baselineDisplayName || draftAvatarSignature != baselineAvatarSignature
     }
 
     var body: some View {
@@ -76,9 +71,7 @@ struct ProfileView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
-                    trustSummaryCard
-                    profileStatsGrid
-                    starExplanationCard
+                    ProfileInsightsSection(user: user)
                 }
                 .padding(20)
             }
@@ -97,6 +90,9 @@ struct ProfileView: View {
                 Task {
                     await loadAvatar(from: newItem)
                 }
+            }
+            .sheet(isPresented: $isShowingNameEditor) {
+                nameEditorSheet
             }
         }
     }
@@ -126,23 +122,13 @@ struct ProfileView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .center, spacing: 10) {
-                            if isEditingName {
-                                TextField("Your name", text: $draftDisplayName)
-                                    .textInputAutocapitalization(.words)
-                                    .disableAutocorrection(true)
-                                    .focused($isNameFieldFocused)
-                                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                                    .foregroundStyle(SpotRelayTheme.textPrimary)
-                            } else {
-                                Text(draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? user.displayName : draftDisplayName)
-                                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                                    .foregroundStyle(SpotRelayTheme.textPrimary)
-                                    .lineLimit(2)
-                            }
+                            Text(draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? user.displayName : draftDisplayName)
+                                .font(.system(size: 32, weight: .bold, design: .rounded))
+                                .foregroundStyle(SpotRelayTheme.textPrimary)
+                                .lineLimit(2)
 
                             Button {
-                                isEditingName = true
-                                isNameFieldFocused = true
+                                beginEditingName()
                             } label: {
                                 Image(systemName: "square.and.pencil")
                                     .font(.system(size: 15, weight: .bold))
@@ -169,8 +155,8 @@ struct ProfileView: View {
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         ZStack(alignment: .bottomTrailing) {
                             Group {
-                                if let draftAvatarImage {
-                                    Image(uiImage: draftAvatarImage)
+                                if let draftAvatarPreviewImage {
+                                    Image(uiImage: draftAvatarPreviewImage)
                                         .resizable()
                                         .scaledToFill()
                                 } else {
@@ -214,6 +200,8 @@ struct ProfileView: View {
                     if draftAvatarJPEGData != nil {
                         Button("Remove") {
                             draftAvatarJPEGData = nil
+                            draftAvatarPreviewImage = nil
+                            draftAvatarSignature = 0
                             selectedPhotoItem = nil
                         }
                         .font(.caption.weight(.semibold))
@@ -442,19 +430,29 @@ struct ProfileView: View {
     private func syncDraftsIfNeeded(force: Bool = false) {
         guard force || !hasLoadedDrafts else { return }
         draftDisplayName = user.displayName
+        nameEditorText = user.displayName
         draftAvatarJPEGData = user.avatarJPEGData
+        draftAvatarPreviewImage = previewImage(from: user.avatarJPEGData)
+        baselineDisplayName = user.displayName
+        baselineAvatarSignature = avatarSignature(for: user.avatarJPEGData)
+        draftAvatarSignature = baselineAvatarSignature
         hasLoadedDrafts = true
     }
 
     private func saveProfile() {
-        isNameFieldFocused = false
-        isEditingName = false
         let sanitizedName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         spotStore.updateCurrentUserProfile(
             displayName: sanitizedName.isEmpty ? "You" : sanitizedName,
             avatarJPEGData: draftAvatarJPEGData
         )
         syncDraftsIfNeeded(force: true)
+    }
+
+    private func beginEditingName() {
+        nameEditorText = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? user.displayName
+            : draftDisplayName
+        isShowingNameEditor = true
     }
 
     private func loadAvatar(from item: PhotosPickerItem) async {
@@ -475,6 +473,8 @@ struct ProfileView: View {
 
             await MainActor.run {
                 draftAvatarJPEGData = normalizedAvatarData
+                draftAvatarPreviewImage = previewImage(from: normalizedAvatarData)
+                draftAvatarSignature = avatarSignature(for: normalizedAvatarData)
                 avatarProcessingError = nil
                 selectedPhotoItem = nil
             }
@@ -496,5 +496,285 @@ struct ProfileView: View {
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
         return resizedImage.jpegData(compressionQuality: 0.78)
+    }
+
+    private func previewImage(from data: Data?) -> UIImage? {
+        guard let data else { return nil }
+        return UIImage(data: data)
+    }
+
+    private func avatarSignature(for data: Data?) -> Int {
+        data?.hashValue ?? 0
+    }
+
+    private var nameEditorSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Update your profile name")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                Text("Choose the name other drivers will see during a handoff.")
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+
+                TextField("Your name", text: $nameEditorText)
+                    .textInputAutocapitalization(.words)
+                    .disableAutocorrection(true)
+                    .focused($isNameEditorFieldFocused)
+                    .submitLabel(.done)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(SpotRelayTheme.badgeFill)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+                    )
+                    .onSubmit {
+                        commitEditedName()
+                    }
+                Spacer()
+                Button {
+                    commitEditedName()
+                } label: {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("Use This Name")
+                    }
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(24)
+            .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
+            .task {
+                await MainActor.run {
+                    nameEditorText = nameEditorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? user.displayName : nameEditorText
+                }
+                await Task.yield()
+                isNameEditorFieldFocused = true
+            }
+        }
+        .presentationDetents([.fraction(0.44)])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func commitEditedName() {
+        let sanitizedName = nameEditorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        draftDisplayName = sanitizedName.isEmpty ? "You" : sanitizedName
+        isNameEditorFieldFocused = false
+        isShowingNameEditor = false
+    }
+}
+
+private struct ProfileInsightsSection: View, Equatable {
+    let user: AppUser
+
+    private var memberSinceText: String {
+        user.joinedAt.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private var reliabilityTint: Color {
+        switch user.reliabilityScore {
+        case 97...:
+            return SpotRelayTheme.success
+        case 90...:
+            return SpotRelayTheme.primary
+        default:
+            return SpotRelayTheme.warning
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            trustSummaryCard
+            profileStatsGrid
+            starExplanationCard
+        }
+    }
+
+    private var trustSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Trust summary")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            HStack(spacing: 12) {
+                trustSummaryPill(
+                    title: "\(user.reliabilityScore)%",
+                    subtitle: "reliability",
+                    tint: reliabilityTint
+                )
+                trustSummaryPill(
+                    title: "\(user.shareStars)",
+                    subtitle: "share stars",
+                    tint: SpotRelayTheme.warning
+                )
+                trustSummaryPill(
+                    title: memberSinceText,
+                    subtitle: "member since",
+                    tint: SpotRelayTheme.primary
+                )
+            }
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
+    private var profileStatsGrid: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Profile stats")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
+                statCard(
+                    title: "Stars earned",
+                    value: "\(user.shareStars)",
+                    subtitle: "Successful spot shares"
+                )
+                statCard(
+                    title: "Completed handoffs",
+                    value: "\(user.successfulHandoffs)",
+                    subtitle: "Successful total exchanges"
+                )
+                statCard(
+                    title: "Missed handoffs",
+                    value: "\(user.noShowCount)",
+                    subtitle: "No-shows or failed finishes"
+                )
+                statCard(
+                    title: "Resolved",
+                    value: "\(user.totalResolvedHandoffs)",
+                    subtitle: "Tracked trust outcomes"
+                )
+            }
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
+    private var starExplanationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("How stars are earned")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            Text("Stars only increase when you share a spot and the handoff is completed successfully. That keeps the trust signal tied to real, finished exchanges instead of simple posting volume.")
+                .font(.subheadline)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+
+            HStack(spacing: 12) {
+                explanationRow(
+                    icon: "star.fill",
+                    title: "Successful share",
+                    subtitle: "Earns one star"
+                )
+                explanationRow(
+                    icon: "xmark.circle.fill",
+                    title: "Failed finish",
+                    subtitle: "Doesn't earn a star"
+                )
+            }
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
+    private func trustSummaryPill(title: String, subtitle: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+                .lineLimit(3)
+                .minimumScaleFactor(0.82)
+
+            Text(subtitle)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(tint)
+                .lineLimit(3)
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
+        .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func statCard(title: String, value: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .tracking(1)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(value)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            Spacer(minLength: 0)
+
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .leading)
+        .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private func explanationRow(icon: String, title: String, subtitle: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(SpotRelayTheme.warning)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
