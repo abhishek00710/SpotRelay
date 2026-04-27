@@ -132,6 +132,7 @@ Before submitting a new build to App Store Connect:
 - Complete App Store privacy labels to match the app's privacy manifest: precise location, user ID, name, photos/videos for profile avatars, and device ID for push/device tokens. Do not mark tracking unless tracking is added later.
 - Publish the latest Firestore rules and deploy the latest Firebase Functions.
 - Enable Firestore TTL on `spots.cleanupAt`.
+- If App Store Connect reports missing symbols for Firebase binary frameworks, run `bash Scripts/fix_archive_vendor_dsyms.sh` before uploading the archive again.
 - Provide a public privacy policy URL and support URL in App Store Connect. A draft privacy policy is included in [PRIVACY.md](PRIVACY.md).
 - Test background location and parked-car reminders on a real device before review.
 

@@ -108,7 +108,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         static let savedParkedLocation = "parkingReminder.savedLocation"
         static let hasExitedRegion = "parkingReminder.hasExitedRegion"
         static let debugState = "parkingReminder.debugState"
-        static let regionIdentifier = "parkingReminder.returnToCar.region"
+        nonisolated static let regionIdentifier = "parkingReminder.returnToCar.region"
         static let notificationIdentifier = "parkingReminder.returnToCar.notification"
     }
 
