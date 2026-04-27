@@ -12,6 +12,15 @@ struct AppUser: Identifiable, Codable, Equatable {
 }
 
 extension AppUser {
+    var localizedDisplayName: String {
+        switch displayName {
+        case "You", "Nearby driver":
+            return L10n.tr(displayName)
+        default:
+            return displayName
+        }
+    }
+
     var totalResolvedHandoffs: Int {
         successfulHandoffs + noShowCount
     }
@@ -28,15 +37,15 @@ extension AppUser {
 
     var trustTierTitle: String {
         if shareStars >= 25 || reliabilityScore >= 98 {
-            return "Top trusted sharer"
+            return L10n.tr("Top trusted sharer")
         }
         if shareStars >= 10 || reliabilityScore >= 94 {
-            return "Trusted sharer"
+            return L10n.tr("Trusted sharer")
         }
         if shareStars >= 3 || reliabilityScore >= 88 {
-            return "Reliable sharer"
+            return L10n.tr("Reliable sharer")
         }
-        return "New sharer"
+        return L10n.tr("New sharer")
     }
 
     var displayInitials: String {
@@ -106,29 +115,29 @@ extension ParkingSpotSignal {
     }
 
     func distanceText(from coordinate: CLLocationCoordinate2D?) -> String {
-        guard let meters = distanceMeters(from: coordinate) else { return "Locating you" }
-        return "\(meters)m away"
+        guard let meters = distanceMeters(from: coordinate) else { return L10n.tr("Locating you") }
+        return L10n.format("%d m away", meters)
     }
 
     func distanceValue(from coordinate: CLLocationCoordinate2D?) -> String {
         guard let meters = distanceMeters(from: coordinate) else { return "--" }
-        return "\(meters)m"
+        return L10n.format("%d m", meters)
     }
 
     func statusLabel(for currentUserID: String) -> String {
         switch effectiveStatus {
         case .posted:
-            return "Available"
+            return L10n.tr("Available")
         case .claimed:
-            return claimedBy == currentUserID ? "Claimed by you" : "Claimed"
+            return claimedBy == currentUserID ? L10n.tr("Claimed by you") : L10n.tr("Claimed")
         case .arriving:
-            return claimedBy == currentUserID ? "You're arriving" : "Driver arriving"
+            return claimedBy == currentUserID ? L10n.tr("You're arriving") : L10n.tr("Driver arriving")
         case .completed:
-            return "Completed"
+            return L10n.tr("Completed")
         case .expired:
-            return "Expired"
+            return L10n.tr("Expired")
         case .cancelled:
-            return "Cancelled"
+            return L10n.tr("Cancelled")
         }
     }
 

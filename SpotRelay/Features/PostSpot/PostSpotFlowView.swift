@@ -10,9 +10,9 @@ struct PostSpotFlowView: View {
         var title: String {
             switch self {
             case .parked:
-                return "Parked spot"
+                return L10n.tr("Parked spot")
             case .current:
-                return "Current location"
+                return L10n.tr("Current location")
             }
         }
 
@@ -220,7 +220,7 @@ struct PostSpotFlowView: View {
                         .minimumScaleFactor(0.8)
 
                     if isCurrentWaiting {
-                        Text("Locating")
+                        Text(L10n.tr("Locating"))
                             .font(.caption2.weight(.semibold))
                             .lineLimit(1)
                     }
@@ -238,20 +238,20 @@ struct PostSpotFlowView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(isUsingParkedLocation ? "Sharing from parked car" : "Sharing from live location")
+                    Text(isUsingParkedLocation ? L10n.tr("Sharing from parked car") : L10n.tr("Sharing from live location"))
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
                     Text(isUsingParkedLocation
-                         ? "Your saved parked location will be shared, which is usually more precise than your live position."
-                         : "The handoff will publish from your current live location.")
+                         ? L10n.tr("Your saved parked location will be shared, which is usually more precise than your live position.")
+                         : L10n.tr("The handoff will publish from your current live location."))
                         .font(.subheadline)
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                 }
 
                 Spacer()
 
-                Text(shareCoordinate == nil ? "Waiting" : (isUsingParkedLocation ? "Parked" : "Live"))
+                Text(shareCoordinate == nil ? L10n.tr("Waiting") : (isUsingParkedLocation ? L10n.tr("Parked") : L10n.tr("Live")))
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
@@ -261,7 +261,7 @@ struct PostSpotFlowView: View {
 
             if shareCoordinate == nil {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("We’ll use your parked location when smart parking saves one, or your live position once it’s available.")
+                    Text(L10n.tr("We’ll use your parked location when smart parking saves one, or your live position once it’s available."))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
 
@@ -271,7 +271,7 @@ struct PostSpotFlowView: View {
                     } label: {
                         HStack {
                             Image(systemName: "location.fill")
-                            Text("Enable Current Location")
+                            Text(L10n.tr("Enable Current Location"))
                         }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.primary)
@@ -320,7 +320,7 @@ struct PostSpotFlowView: View {
                             .foregroundStyle(SpotRelayTheme.badgeText)
 
                         if let userCoordinate = spotStore.userCoordinate {
-                            Text("\(parkedLocation.coordinateDistanceText(from: userCoordinate)) from you")
+                            Text(L10n.format("%@ from you", parkedLocation.coordinateDistanceText(from: userCoordinate)))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(SpotRelayTheme.textSecondary)
                         }
@@ -343,7 +343,7 @@ struct PostSpotFlowView: View {
         } label: {
             HStack {
                 Image(systemName: shareCoordinate == nil ? "location.fill" : (isUsingParkedLocation ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"))
-                Text(shareCoordinate == nil ? "Waiting for Location" : (isUsingParkedLocation ? "Share Parked Spot" : "Share Current Location"))
+                Text(shareCoordinate == nil ? L10n.tr("Waiting for Location") : (isUsingParkedLocation ? L10n.tr("Share Parked Spot") : L10n.tr("Share Current Location")))
             }
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
@@ -403,7 +403,7 @@ struct PostSpotFlowView: View {
 private struct ParkedLocationBadgePin: View {
     var body: some View {
         VStack(spacing: 6) {
-            Text("Parked")
+            Text(L10n.tr("Parked"))
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)

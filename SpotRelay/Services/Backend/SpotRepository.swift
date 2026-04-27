@@ -15,21 +15,21 @@ enum SpotRepositoryError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .activeLeavingSignalExists:
-            return "You already have a live leaving handoff."
+            return L10n.tr("You already have a live leaving handoff.")
         case .activeClaimExists:
-            return "You already have an active claimed handoff."
+            return L10n.tr("You already have an active claimed handoff.")
         case .handoffNotFound:
-            return "That handoff could not be found."
+            return L10n.tr("That handoff could not be found.")
         case .spotUnavailable:
-            return "That spot is no longer available."
+            return L10n.tr("That spot is no longer available.")
         case .outsideNearbyRadius:
-            return "That spot is outside the nearby claim radius."
+            return L10n.tr("That spot is outside the nearby claim radius.")
         case .cannotClaimOwnSpot:
-            return "You can't claim your own parking handoff."
+            return L10n.tr("You can't claim your own parking handoff.")
         case .unauthorizedMutation:
-            return "This handoff action is no longer allowed."
+            return L10n.tr("This handoff action is no longer allowed.")
         case .backendNotConfigured:
-            return "The Firebase backend is not configured yet."
+            return L10n.tr("The Firebase backend is not configured yet.")
         }
     }
 }

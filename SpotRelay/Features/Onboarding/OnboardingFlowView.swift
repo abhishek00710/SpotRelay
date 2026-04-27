@@ -207,12 +207,12 @@ struct OnboardingFlowView: View {
                             .frame(width: 20)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(primaryButtonTitle)
+                            Text(L10n.tr(primaryButtonTitle))
                                 .font(.headline.weight(.bold))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.82)
 
-                            Text(currentPage.buttonCaption)
+                            Text(L10n.tr(currentPage.buttonCaption))
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(.white.opacity(0.82))
                                 .lineLimit(2)
@@ -235,7 +235,7 @@ struct OnboardingFlowView: View {
             }
             .frame(height: 76)
 
-            Text(currentPage.footnote)
+            Text(L10n.tr(currentPage.footnote))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(SpotRelayTheme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -263,9 +263,9 @@ struct OnboardingFlowView: View {
         case .location:
             switch spotStore.locationAuthorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
-                return "Continue"
+                return L10n.tr("Continue")
             case .denied, .restricted:
-                return "Open Settings"
+                return L10n.tr("Open Settings")
             case .notDetermined:
                 return currentPage.buttonTitle
             @unknown default:
@@ -274,9 +274,9 @@ struct OnboardingFlowView: View {
         case .notifications:
             switch pushNotificationStore.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                return "Continue"
+                return L10n.tr("Continue")
             case .denied:
-                return "Open Settings"
+                return L10n.tr("Open Settings")
             case .notDetermined:
                 return currentPage.buttonTitle
             @unknown default:
@@ -285,13 +285,13 @@ struct OnboardingFlowView: View {
         case .smartParking:
             switch smartParkingStore.status {
             case .monitoring:
-                return "Finish Setup"
+                return L10n.tr("Finish Setup")
             case .needsAlwaysLocation, .needsMotionAccess:
-                return "Open Settings"
+                return L10n.tr("Open Settings")
             case .disabled:
                 return currentPage.buttonTitle
             case .unsupported:
-                return "Finish for Now"
+                return L10n.tr("Finish for Now")
             }
         }
     }
@@ -299,39 +299,39 @@ struct OnboardingFlowView: View {
     private func stepStatus(for kind: OnboardingPage.Kind) -> OnboardingStepStatus? {
         switch kind {
         case .intro:
-            return .init(title: "Real-time", tone: .neutral)
+            return .init(title: L10n.tr("Real-time"), tone: .neutral)
         case .location:
             switch spotStore.locationAuthorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
-                return .init(title: "Location Ready", tone: .ready)
+                return .init(title: L10n.tr("Location Ready"), tone: .ready)
             case .denied, .restricted:
-                return .init(title: "Needs Settings", tone: .warning)
+                return .init(title: L10n.tr("Needs Settings"), tone: .warning)
             case .notDetermined:
-                return .init(title: "Recommended", tone: .accent)
+                return .init(title: L10n.tr("Recommended"), tone: .accent)
             @unknown default:
-                return .init(title: "Recommended", tone: .accent)
+                return .init(title: L10n.tr("Recommended"), tone: .accent)
             }
         case .notifications:
             switch pushNotificationStore.authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                return .init(title: "Notifications On", tone: .ready)
+                return .init(title: L10n.tr("Notifications On"), tone: .ready)
             case .denied:
-                return .init(title: "Needs Settings", tone: .warning)
+                return .init(title: L10n.tr("Needs Settings"), tone: .warning)
             case .notDetermined:
-                return .init(title: "Helpful", tone: .accent)
+                return .init(title: L10n.tr("Helpful"), tone: .accent)
             @unknown default:
-                return .init(title: "Helpful", tone: .accent)
+                return .init(title: L10n.tr("Helpful"), tone: .accent)
             }
         case .smartParking:
             switch smartParkingStore.status {
             case .monitoring:
-                return .init(title: "Smart Parking On", tone: .ready)
+                return .init(title: L10n.tr("Smart Parking On"), tone: .ready)
             case .needsAlwaysLocation, .needsMotionAccess:
-                return .init(title: "Finish Permissions", tone: .warning)
+                return .init(title: L10n.tr("Finish Permissions"), tone: .warning)
             case .disabled:
-                return .init(title: "Optional", tone: .accent)
+                return .init(title: L10n.tr("Optional"), tone: .accent)
             case .unsupported:
-                return .init(title: "Unavailable", tone: .neutral)
+                return .init(title: L10n.tr("Unavailable"), tone: .neutral)
             }
         }
     }
@@ -416,7 +416,7 @@ private struct OnboardingPageCard: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     HStack(alignment: .center, spacing: 10) {
-                        Label(page.eyebrow, systemImage: page.symbol)
+                        Label(L10n.tr(page.eyebrow), systemImage: page.symbol)
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -439,7 +439,7 @@ private struct OnboardingPageCard: View {
 //                            .foregroundStyle(SpotRelayTheme.textPrimary)
 //                            .fixedSize(horizontal: false, vertical: true)
 
-                        Text(page.subtitle)
+                        Text(L10n.tr(page.subtitle))
                             .font(.body.weight(.medium))
                             .foregroundStyle(SpotRelayTheme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -542,18 +542,18 @@ private struct OnboardingHeroArtwork: View {
                         }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Leaving in 2 min")
+                        Text(L10n.tr("Leaving in 2 min"))
                             .font(.headline.weight(.bold))
                             .foregroundStyle(.white)
-                        Text("A driver nearby can claim it live")
+                        Text(L10n.tr("A driver nearby can claim it live"))
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.white.opacity(0.82))
                     }
                 }
 
                 HStack(spacing: 12) {
-                    smallHeroChip(title: "Claimed", tint: Color.white.opacity(0.18))
-                    smallHeroChip(title: "120m away", tint: Color.white.opacity(0.12))
+                    smallHeroChip(title: L10n.tr("Claimed"), tint: Color.white.opacity(0.18))
+                    smallHeroChip(title: L10n.tr("120m away"), tint: Color.white.opacity(0.12))
                 }
             }
             .padding(18)
@@ -561,7 +561,7 @@ private struct OnboardingHeroArtwork: View {
             .offset(x: size.width * 0.12, y: -size.height * 0.10)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("ndoffs")
+                Text(L10n.tr("Handoffs"))
                     .font(.headline.weight(.bold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
@@ -576,10 +576,10 @@ private struct OnboardingHeroArtwork: View {
                         }
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("4 min away")
+                        Text(L10n.tr("4 min away"))
                             .font(.headline.weight(.bold))
                             .foregroundStyle(SpotRelayTheme.textPrimary)
-                        Text("Available now")
+                        Text(L10n.tr("Available now"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(SpotRelayTheme.textSecondary)
                     }
@@ -632,7 +632,7 @@ private struct OnboardingHeroArtwork: View {
                     HStack(spacing: 8) {
                         Image(systemName: "scope")
                             .foregroundStyle(page.tint)
-                        Text("Nearby only")
+                        Text(L10n.tr("Nearby only"))
                             .font(.headline.weight(.bold))
                             .foregroundStyle(SpotRelayTheme.textPrimary)
                     }
@@ -712,10 +712,10 @@ private struct OnboardingHeroArtwork: View {
             .offset(x: -shellWidth * 0.06, y: shellHeight * 0.02)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Back at your car?")
+                Text(L10n.tr("Back at your car?"))
                     .font(.headline.weight(.bold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
-                Text("Share your spot and help nearby drivers.")
+                Text(L10n.tr("Share your spot and help nearby drivers."))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
             }
@@ -723,7 +723,7 @@ private struct OnboardingHeroArtwork: View {
             .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .offset(x: shellWidth * 0.18, y: -shellHeight * 0.26)
 
-            smallHeroChip(title: "High confidence", tint: page.tint.opacity(0.16))
+            smallHeroChip(title: L10n.tr("High confidence"), tint: page.tint.opacity(0.16))
                 .offset(x: shellWidth * 0.20, y: shellHeight * 0.32)
         }
     }
@@ -758,10 +758,10 @@ private struct OnboardingHeroArtwork: View {
                 }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(L10n.tr(title))
                     .font(.headline.weight(.bold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
-                Text(subtitle)
+                Text(L10n.tr(subtitle))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -775,7 +775,7 @@ private struct OnboardingHeroArtwork: View {
     }
 
     private func smallHeroChip(title: String, tint: Color) -> some View {
-        Text(title)
+        Text(L10n.tr(title))
             .font(.caption.weight(.bold))
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -800,11 +800,11 @@ private struct OnboardingHighlightRow: View {
                 }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(highlight.title)
+                Text(L10n.tr(highlight.title))
                     .font(.headline.weight(.bold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                Text(highlight.detail)
+                Text(L10n.tr(highlight.detail))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

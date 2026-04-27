@@ -1,0 +1,4 @@
+"NSLocationAlwaysAndWhenInUseUsageDescription" = "SpotRelay usa tu ubicación en segundo plano para detectar cuándo probablemente estacionaste y recordarte cuando vuelvas a tu auto.";
+"NSLocationAlwaysUsageDescription" = "SpotRelay usa tu ubicación en segundo plano para detectar cuándo probablemente estacionaste y recordarte cuando vuelvas a tu auto.";
+"NSLocationWhenInUseUsageDescription" = "SpotRelay usa tu ubicación para mostrar traspasos de estacionamiento cercanos y centrar el mapa a tu alrededor.";
+"NSMotionUsageDescription" = "SpotRelay usa Movimiento y Fitness para detectar cuándo probablemente terminó un viaje en auto y activar recordatorios de estacionamiento automáticamente.";

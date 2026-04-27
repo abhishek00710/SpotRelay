@@ -320,7 +320,7 @@ struct HomeView: View {
             Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text(spotStore.userCoordinate == nil ? "Locating..." : spotStore.currentAreaLabel)
+                Text(spotStore.userCoordinate == nil ? L10n.tr("Locating...") : localizedAreaLabel(spotStore.currentAreaLabel))
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
@@ -658,40 +658,40 @@ struct HomeView: View {
 
     private var sheetSubtitle: String {
         if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
-            return "We’ll show live handoffs as soon as we have your current location."
+            return L10n.tr("We’ll show live handoffs as soon as we have your current location.")
         }
         if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation != nil {
-            return "Your parked location is saved. Nearby claims will return once live location updates."
+            return L10n.tr("Your parked location is saved. Nearby claims will return once live location updates.")
         }
         if groupedHandoffCount == 0 {
-            return "Nothing active within 500m yet"
+            return L10n.tr("Nothing active within 500m yet")
         }
         if !claimSectionSignals.isEmpty && !locationSectionSignals.isEmpty {
-            return "Claims and your live handoff grouped together"
+            return L10n.tr("Claims and your live handoff grouped together")
         }
         if !claimSectionSignals.isEmpty {
-            return "Nearby spots"
+            return L10n.tr("Nearby spots")
         }
-        return "Your live handoff location is active"
+        return L10n.tr("Your live handoff location is active")
     }
 
     private var collapsedSubtitle: String {
         if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
-            return "Tap to enable your location"
+            return L10n.tr("Tap to enable your location")
         }
         if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation != nil {
-            return "Parked car saved"
+            return L10n.tr("Parked car saved")
         }
         if groupedHandoffCount == 0 {
-            return "No live handoffs within 500m"
+            return L10n.tr("No live handoffs within 500m")
         }
         if !claimSectionSignals.isEmpty && !locationSectionSignals.isEmpty {
-            return "\(claimSectionSignals.count) claims • \(locationSectionSignals.count) locations"
+            return L10n.format("%d claims • %d locations", claimSectionSignals.count, locationSectionSignals.count)
         }
         if !claimSectionSignals.isEmpty {
-            return claimSectionSignals.count == 1 ? "1 handoff claim" : "\(claimSectionSignals.count) handoff claims"
+            return claimSectionSignals.count == 1 ? L10n.tr("1 handoff claim") : L10n.format("%d handoff claims", claimSectionSignals.count)
         }
-        return locationSectionSignals.count == 1 ? "1 handoff location" : "\(locationSectionSignals.count) handoff locations"
+        return locationSectionSignals.count == 1 ? L10n.tr("1 handoff location") : L10n.format("%d handoff locations", locationSectionSignals.count)
     }
 
     private var locationPendingCard: some View {
@@ -750,12 +750,12 @@ struct HomeView: View {
 
     private var primaryButtonTitle: String {
         if !hasShareableLocation {
-            return "Use Current Location"
+            return L10n.tr("Use Current Location")
         }
         if spotStore.currentUserLeavingSignal != nil {
-            return "View My Live Handoff"
+            return L10n.tr("View My Live Handoff")
         }
-        return "Leaving Soon"
+        return L10n.tr("Leaving Soon")
     }
 
     private var primaryButtonIconName: String {
@@ -802,6 +802,10 @@ struct HomeView: View {
         } else {
             cameraPosition = position
         }
+    }
+
+    private func localizedAreaLabel(_ label: String) -> String {
+        label == "Nearby" ? L10n.tr("Nearby") : label
     }
 
     private var nearbySheetGrabberGesture: some Gesture {
@@ -889,9 +893,9 @@ struct HomeView: View {
     private func showParkedLocationToast(for reminder: ParkingReminderStore.Reminder) {
         let message: String
         if let areaLabel = reminder.areaLabel, !areaLabel.isEmpty {
-            message = "Centered on your parked spot near \(areaLabel)."
+            message = L10n.format("Centered on your parked spot near %@.", areaLabel)
         } else {
-            message = "Centered on your parked spot."
+            message = L10n.tr("Centered on your parked spot.")
         }
 
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
@@ -965,8 +969,8 @@ struct HomeView: View {
         case .denied:
             notificationsReady = false
             parkingReminderAlert = HomeViewAlert(
-                title: "Notifications are off",
-                message: "Turn notifications on so SpotRelay can alert you when you're back near your parked car."
+                title: L10n.tr("Notifications are off"),
+                message: L10n.tr("Turn notifications on so SpotRelay can alert you when you're back near your parked car.")
             )
         @unknown default:
             notificationsReady = false
@@ -980,23 +984,23 @@ struct HomeView: View {
         switch smartParkingStore.status {
         case .monitoring:
             parkingReminderAlert = HomeViewAlert(
-                title: "Smart parking is on",
-                message: "SpotRelay will now look for likely parking stops and arm a return reminder automatically."
+                title: L10n.tr("Smart parking is on"),
+                message: L10n.tr("SpotRelay will now look for likely parking stops and arm a return reminder automatically.")
             )
         case .needsAlwaysLocation:
             parkingReminderAlert = HomeViewAlert(
-                title: "Finish location setup",
-                message: "Choose Always Allow for SpotRelay so smart parking can keep working even when the app isn't open."
+                title: L10n.tr("Finish location setup"),
+                message: L10n.tr("Choose Always Allow for SpotRelay so smart parking can keep working even when the app isn't open.")
             )
         case .needsMotionAccess:
             parkingReminderAlert = HomeViewAlert(
-                title: "Motion access needed",
-                message: "Allow Motion & Fitness for SpotRelay so it can tell when a drive has likely ended."
+                title: L10n.tr("Motion access needed"),
+                message: L10n.tr("Allow Motion & Fitness for SpotRelay so it can tell when a drive has likely ended.")
             )
         case .unsupported:
             parkingReminderAlert = HomeViewAlert(
-                title: "Smart parking unavailable",
-                message: "This device doesn't expose the motion signals SpotRelay needs for automatic parked-spot detection."
+                title: L10n.tr("Smart parking unavailable"),
+                message: L10n.tr("This device doesn't expose the motion signals SpotRelay needs for automatic parked-spot detection.")
             )
         case .disabled:
             break
@@ -1020,11 +1024,11 @@ struct HomeView: View {
                     .foregroundStyle(SpotRelayTheme.primary)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text(L10n.tr(title))
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                    Text(subtitle)
+                    Text(L10n.tr(subtitle))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                 }
@@ -1053,11 +1057,11 @@ struct HomeView: View {
 
     private func sectionEmptyState(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(L10n.tr(title))
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(SpotRelayTheme.textPrimary)
 
-            Text(subtitle)
+            Text(L10n.tr(subtitle))
                 .font(.subheadline)
                 .foregroundStyle(SpotRelayTheme.textSecondary)
         }
@@ -1131,7 +1135,7 @@ private struct HomeViewAlert: Identifiable {
 private struct ParkedCarPinView: View {
     var body: some View {
         VStack(spacing: 6) {
-            Text("Parked")
+            Text(L10n.tr("Parked"))
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
@@ -1166,7 +1170,7 @@ private struct ParkedLocationDetailView: View {
     }
 
     private var statusTitle: String {
-        parkingReminderStore.activeReminder != nil ? "Reminder armed" : "Ready to share"
+        parkingReminderStore.activeReminder != nil ? L10n.tr("Reminder armed") : L10n.tr("Ready to share")
     }
 
     private var savedRelativeText: String {
@@ -1260,7 +1264,7 @@ private struct ParkedLocationDetailView: View {
             detailRow(
                 icon: "clock.fill",
                 title: "Saved",
-                value: "Updated \(savedRelativeText)",
+                value: L10n.format("Updated %@", savedRelativeText),
                 subtitle: savedAbsoluteText
             )
 
@@ -1279,7 +1283,7 @@ private struct ParkedLocationDetailView: View {
             )
 
             HStack(spacing: 10) {
-                badge(text: "\(Int(reminder.radiusMeters))m return radius")
+                badge(text: L10n.format("%d m return radius", Int(reminder.radiusMeters)))
 
                 if let userCoordinate = spotStore.userCoordinate {
                     badge(text: reminder.coordinateDistanceText(from: userCoordinate))
@@ -1422,17 +1426,17 @@ private struct ParkedLocationDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(L10n.tr(title))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
                     .textCase(.uppercase)
                     .tracking(0.9)
 
-                Text(value)
+                Text(L10n.tr(value))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                Text(subtitle)
+                Text(L10n.tr(subtitle))
                     .font(.subheadline)
                     .foregroundStyle(SpotRelayTheme.textSecondary)
             }
@@ -1444,7 +1448,7 @@ private struct ParkedLocationDetailView: View {
     private func parkedActionButton(title: String, icon: String, color: Color) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
-            Text(title)
+            Text(L10n.tr(title))
         }
         .font(.subheadline.weight(.bold))
         .frame(maxWidth: .infinity)
@@ -1456,8 +1460,8 @@ private struct ParkedLocationDetailView: View {
     private func updateParkedLocationToCurrentPosition() async {
         guard let userCoordinate = spotStore.userCoordinate else {
             localAlert = HomeViewAlert(
-                title: "Current location unavailable",
-                message: "Move the map back to your current location first, then try updating the parked pin again."
+                title: L10n.tr("Current location unavailable"),
+                message: L10n.tr("Move the map back to your current location first, then try updating the parked pin again.")
             )
             return
         }
@@ -1470,7 +1474,7 @@ private struct ParkedLocationDetailView: View {
             )
         } catch {
             localAlert = HomeViewAlert(
-                title: "Couldn't update parked spot",
+                title: L10n.tr("Couldn't update parked spot"),
                 message: error.localizedDescription
             )
         }
@@ -1484,7 +1488,7 @@ private struct ParkedLocationDetailView: View {
             ),
             address: nil
         )
-        destination.name = "Saved Parked Car"
+        destination.name = L10n.tr("Saved Parked Car")
 
         let launchOptions = [
             MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
@@ -1498,7 +1502,7 @@ private struct ParkedLocationDetailView: View {
                 ),
                 address: nil
             )
-            source.name = "Current Location"
+            source.name = L10n.tr("Current Location")
             MKMapItem.openMaps(with: [source, destination], launchOptions: launchOptions)
         } else {
             destination.openInMaps(launchOptions: launchOptions)
@@ -1551,7 +1555,7 @@ private struct SpotPinView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Text(signal.isActive ? signal.status.rawValue.capitalized : "Closed")
+            Text(signal.isActive ? L10n.tr(signal.status.rawValue.capitalized) : L10n.tr("Closed"))
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
@@ -1641,19 +1645,19 @@ private struct NearbySpotRow: View {
     private var badgeTitle: String {
         switch mode {
         case .claim:
-            return signal.claimedBy == spotStore.currentUser.id ? "Claimed" : "Open"
+            return signal.claimedBy == spotStore.currentUser.id ? L10n.tr("Claimed") : L10n.tr("Open")
         case .location:
             switch signal.status {
             case .posted:
-                return "Live"
+                return L10n.tr("Live")
             case .claimed, .arriving:
-                return "Claimed"
+                return L10n.tr("Claimed")
             case .completed:
-                return "Done"
+                return L10n.tr("Done")
             case .expired:
-                return "Expired"
+                return L10n.tr("Expired")
             case .cancelled:
-                return "Cancelled"
+                return L10n.tr("Cancelled")
             }
         }
     }
@@ -1687,9 +1691,9 @@ struct SpotDetailSheet: View {
             }
 
             HStack(spacing: 12) {
-                detailChip(title: spot.minutesRemainingText, subtitle: "remaining")
-                detailChip(title: spot.distanceValue(from: spotStore.userCoordinate), subtitle: "away")
-                detailChip(title: "Live", subtitle: spot.statusLabel(for: spotStore.currentUser.id))
+                detailChip(title: spot.minutesRemainingText, subtitle: L10n.tr("remaining"))
+                detailChip(title: spot.distanceValue(from: spotStore.userCoordinate), subtitle: L10n.tr("away"))
+                detailChip(title: L10n.tr("Live"), subtitle: spot.statusLabel(for: spotStore.currentUser.id))
             }
 
             Button(action: onClaim) {
@@ -1729,6 +1733,6 @@ extension ParkingSpotSignal {
     var minutesRemainingText: String {
         let seconds = max(Int(leavingAt.timeIntervalSinceNow.rounded()), 0)
         let minutes = max(Int(ceil(Double(seconds) / 60)), 0)
-        return "\(minutes) min"
+        return L10n.format("%d min", minutes)
     }
 }

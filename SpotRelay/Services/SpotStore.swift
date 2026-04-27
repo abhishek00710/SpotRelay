@@ -120,10 +120,10 @@ final class SpotStore: NSObject, ObservableObject {
     func displayName(for userID: String?) -> String? {
         guard let userID else { return nil }
         if userID == currentUser.id {
-            return currentUser.displayName
+            return currentUser.localizedDisplayName
         }
         if let profile = userProfiles[userID] {
-            return profile.displayName
+            return profile.localizedDisplayName
         }
 
         let normalized = userID
@@ -133,7 +133,7 @@ final class SpotStore: NSObject, ObservableObject {
             .map { segment in
                 let lowercased = segment.lowercased()
                 if lowercased == "driver" {
-                    return "Driver"
+                    return L10n.tr("Driver")
                 }
                 if lowercased.count == 1 {
                     return lowercased.uppercased()
@@ -142,7 +142,7 @@ final class SpotStore: NSObject, ObservableObject {
             }
             .joined(separator: " ")
 
-        return normalized.isEmpty ? "Nearby driver" : normalized
+        return normalized.isEmpty ? L10n.tr("Nearby driver") : normalized
     }
 
     func profile(for userID: String?) -> AppUser? {
@@ -192,8 +192,8 @@ final class SpotStore: NSObject, ObservableObject {
         guard ensureReadyForMutation() else { return false }
         guard let coordinateToShare = coordinateOverride ?? preferredShareCoordinate else {
             presentBanner(
-                title: "Share location needed",
-                message: "We need your parked location or live location before we can share your spot."
+                title: L10n.tr("Share location needed"),
+                message: L10n.tr("We need your parked location or live location before we can share your spot.")
             )
             return false
         }
@@ -211,8 +211,8 @@ final class SpotStore: NSObject, ObservableObject {
         } catch {
             presentRepositoryError(
                 error,
-                title: "Couldn't share your spot",
-                fallbackMessage: "Please try posting your handoff again in a moment."
+                title: L10n.tr("Couldn't share your spot"),
+                fallbackMessage: L10n.tr("Please try posting your handoff again in a moment.")
             )
             return false
         }
@@ -235,8 +235,8 @@ final class SpotStore: NSObject, ObservableObject {
         } catch {
             presentRepositoryError(
                 error,
-                title: "Couldn't claim this handoff",
-                fallbackMessage: "That spot may already be taken or no longer nearby."
+                title: L10n.tr("Couldn't claim this handoff"),
+                fallbackMessage: L10n.tr("That spot may already be taken or no longer nearby.")
             )
             return false
         }
@@ -254,8 +254,8 @@ final class SpotStore: NSObject, ObservableObject {
         } catch {
             presentRepositoryError(
                 error,
-                title: "Couldn't update arrival",
-                fallbackMessage: "Please try marking your arrival again."
+                title: L10n.tr("Couldn't update arrival"),
+                fallbackMessage: L10n.tr("Please try marking your arrival again.")
             )
             return false
         }
@@ -274,8 +274,8 @@ final class SpotStore: NSObject, ObservableObject {
         } catch {
             presentRepositoryError(
                 error,
-                title: "Couldn't cancel this handoff",
-                fallbackMessage: "Please try again in a moment."
+                title: L10n.tr("Couldn't cancel this handoff"),
+                fallbackMessage: L10n.tr("Please try again in a moment.")
             )
             return false
         }
@@ -299,8 +299,8 @@ final class SpotStore: NSObject, ObservableObject {
         } catch {
             presentRepositoryError(
                 error,
-                title: "Couldn't finish this handoff",
-                fallbackMessage: "Please try again before leaving the handoff."
+                title: L10n.tr("Couldn't finish this handoff"),
+                fallbackMessage: L10n.tr("Please try again before leaving the handoff.")
             )
             return false
         }
@@ -420,16 +420,16 @@ final class SpotStore: NSObject, ObservableObject {
     private func ensureReadyForMutation() -> Bool {
         guard isNetworkAvailable else {
             presentBanner(
-                title: "You're offline",
-                message: "SpotRelay needs internet for live spots, claims, profile updates, and real-time handoffs."
+                title: L10n.tr("You're offline"),
+                message: L10n.tr("SpotRelay needs internet for live spots, claims, profile updates, and real-time handoffs.")
             )
             return false
         }
 
         guard !(backendMode.isFirebase && currentUser.id == firebasePendingUserID) else {
             presentBanner(
-                title: "Connecting to Firebase",
-                message: "Please wait a moment for your secure user session to finish connecting."
+                title: L10n.tr("Connecting to Firebase"),
+                message: L10n.tr("Please wait a moment for your secure user session to finish connecting.")
             )
             return false
         }
@@ -495,8 +495,8 @@ extension SpotStore: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: any Error) {
         Task { @MainActor [weak self] in
             self?.presentBanner(
-                title: "Location unavailable",
-                message: "We couldn't read your current location yet. Please try again in a moment."
+                title: L10n.tr("Location unavailable"),
+                message: L10n.tr("We couldn't read your current location yet. Please try again in a moment.")
             )
         }
     }

@@ -18,14 +18,14 @@ final class ParkingReminderStore: NSObject, ObservableObject {
 
         var areaSummary: String {
             guard let areaLabel, !areaLabel.isEmpty, areaLabel != "Nearby" else {
-                return "We'll nudge you when you're back near this parked spot."
+                return L10n.tr("We'll nudge you when you're back near this parked spot.")
             }
-            return "We'll nudge you when you're back near \(areaLabel)."
+            return L10n.format("We'll nudge you when you're back near %@.", areaLabel)
         }
 
         func coordinateDistanceText(from coordinate: CLLocationCoordinate2D) -> String {
             let meters = Int(distanceMeters(from: coordinate).rounded())
-            return "\(meters)m"
+            return L10n.format("%d m", meters)
         }
 
         func distanceMeters(from coordinate: CLLocationCoordinate2D) -> CLLocationDistance {
@@ -42,9 +42,9 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         var errorDescription: String? {
             switch self {
             case .locationAuthorizationRequired:
-                return "Always location access is required for parked-car return reminders."
+                return L10n.tr("Always location access is required for parked-car return reminders.")
             case .regionMonitoringUnavailable:
-                return "This device can't monitor parked-car reminder regions."
+                return L10n.tr("This device can't monitor parked-car reminder regions.")
             }
         }
     }
@@ -60,34 +60,34 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         var title: String {
             switch self {
             case .noReminder:
-                return "No parked reminder armed"
+                return L10n.tr("No parked reminder armed")
             case .armed:
-                return "Parked reminder armed"
+                return L10n.tr("Parked reminder armed")
             case .exitedWaitingForReturn:
-                return "Left parked zone"
+                return L10n.tr("Left parked zone")
             case .notificationScheduled:
-                return "Return notification scheduled"
+                return L10n.tr("Return notification scheduled")
             case .pausedNeedsAlwaysLocation:
-                return "Reminder paused"
+                return L10n.tr("Reminder paused")
             case .monitoringUnavailable:
-                return "Region monitoring unavailable"
+                return L10n.tr("Region monitoring unavailable")
             }
         }
 
         var detail: String {
             switch self {
             case .noReminder:
-                return "SpotRelay hasn't armed a parked-car return reminder yet."
+                return L10n.tr("SpotRelay hasn't armed a parked-car return reminder yet.")
             case .armed:
-                return "Monitoring your parked spot now."
+                return L10n.tr("Monitoring your parked spot now.")
             case .exitedWaitingForReturn:
-                return "Waiting for you to come back to the parked spot."
+                return L10n.tr("Waiting for you to come back to the parked spot.")
             case .notificationScheduled:
-                return "SpotRelay detected your return and queued the local notification."
+                return L10n.tr("SpotRelay detected your return and queued the local notification.")
             case .pausedNeedsAlwaysLocation:
-                return "Always location is required for the parked-car reminder to keep working."
+                return L10n.tr("Always location is required for the parked-car reminder to keep working.")
             case .monitoringUnavailable:
-                return "This device can't monitor the parked-car region."
+                return L10n.tr("This device can't monitor the parked-car region.")
             }
         }
 
@@ -287,11 +287,11 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         guard hasExitedRegion else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Back at your car?"
+        content.title = L10n.tr("Back at your car?")
         if let areaLabel = reminder.areaLabel, !areaLabel.isEmpty, areaLabel != "Nearby" {
-            content.subtitle = "Near \(areaLabel)"
+            content.subtitle = L10n.format("Near %@", areaLabel)
         }
-        content.body = "Are you about to leave? Share your spot and help nearby drivers."
+        content.body = L10n.tr("Are you about to leave? Share your spot and help nearby drivers.")
         content.sound = .default
         content.userInfo = [
             "type": "parking-reminder",

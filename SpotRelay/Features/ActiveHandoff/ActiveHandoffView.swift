@@ -395,22 +395,22 @@ struct ActiveHandoffView: View {
     private var roleTitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
-            return "Your spot is live"
+            return L10n.tr("Your spot is live")
         case .arriving:
-            return "Heading to your spot"
+            return L10n.tr("Heading to your spot")
         case .none:
-            return "Active handoff"
+            return L10n.tr("Active handoff")
         }
     }
 
     private var roleSubtitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
-            return "Stay visible while the claimant closes the gap."
+            return L10n.tr("Stay visible while the claimant closes the gap.")
         case .arriving:
-            return "Keep the leaving driver confident with a clear live arrival state."
+            return L10n.tr("Keep the leaving driver confident with a clear live arrival state.")
         case .none:
-            return "Real-time coordination keeps the exchange simple."
+            return L10n.tr("Real-time coordination keeps the exchange simple.")
         }
     }
 
@@ -426,7 +426,7 @@ struct ActiveHandoffView: View {
     private func actionButtonLabel(title: String, color: Color) -> some View {
         let fillStyle = title == "I'm Here" ? AnyShapeStyle(SpotRelayTheme.heroGradient) : AnyShapeStyle(color)
 
-        return Text(title)
+        return Text(L10n.tr(title))
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -437,7 +437,7 @@ struct ActiveHandoffView: View {
     private func completionButton(title: String, icon: String, color: Color) -> some View {
         HStack {
             Image(systemName: icon)
-            Text(title)
+            Text(L10n.tr(title))
         }
         .font(.headline.weight(.bold))
         .frame(maxWidth: .infinity)
@@ -449,7 +449,7 @@ struct ActiveHandoffView: View {
     private func secondaryActionButton(title: String, icon: String, color: Color) -> some View {
         HStack {
             Image(systemName: icon)
-            Text(title)
+            Text(L10n.tr(title))
         }
         .font(.headline.weight(.bold))
         .frame(maxWidth: .infinity)
@@ -463,7 +463,7 @@ struct ActiveHandoffView: View {
             Image(systemName: icon)
                 .font(.headline.weight(.semibold))
 
-            Text(title)
+            Text(L10n.tr(title))
                 .font(.headline.weight(.bold))
 
             Spacer()
@@ -480,7 +480,7 @@ struct ActiveHandoffView: View {
 
     private func statusLine(_ label: String, value: String) -> some View {
         HStack {
-            Text(label)
+            Text(L10n.tr(label))
                 .foregroundStyle(SpotRelayTheme.textSecondary)
             Spacer()
             Text(value)
@@ -492,7 +492,7 @@ struct ActiveHandoffView: View {
 
     private func detailPill(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+            Text(L10n.tr(title))
                 .font(.caption.weight(.bold))
                 .textCase(.uppercase)
                 .tracking(1.0)
@@ -517,7 +517,7 @@ struct ActiveHandoffView: View {
             ),
             address: nil
         )
-        destination.name = "SpotRelay Handoff Spot"
+        destination.name = L10n.tr("SpotRelay Handoff Spot")
 
         let launchOptions = [
             MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
@@ -531,7 +531,7 @@ struct ActiveHandoffView: View {
                 ),
                 address: nil
             )
-            source.name = "Current Location"
+            source.name = L10n.tr("Current Location")
             MKMapItem.openMaps(with: [source, destination], launchOptions: launchOptions)
         } else {
             destination.openInMaps(launchOptions: launchOptions)
@@ -588,27 +588,27 @@ struct ActiveHandoffView: View {
 
     private var counterpartyName: String {
         if let counterpartyProfile {
-            return counterpartyProfile.displayName
+            return counterpartyProfile.localizedDisplayName
         }
 
         switch spotStore.currentUserRole {
         case .leaving:
-            return liveSignal.claimedBy == nil ? "Waiting for claim" : "Nearby driver"
+            return liveSignal.claimedBy == nil ? L10n.tr("Waiting for claim") : L10n.tr("Nearby driver")
         case .arriving:
-            return "Leaving driver"
+            return L10n.tr("Leaving driver")
         case .none:
-            return "Nearby driver"
+            return L10n.tr("Nearby driver")
         }
     }
 
     private var panelTitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
-            return liveSignal.claimedBy == nil ? "Waiting for someone to claim" : "\(counterpartyName) claimed your spot"
+            return liveSignal.claimedBy == nil ? L10n.tr("Waiting for someone to claim") : L10n.format("%@ claimed your spot", counterpartyName)
         case .arriving:
-            return "The leaving driver can see you"
+            return L10n.tr("The leaving driver can see you")
         case .none:
-            return "Live handoff confidence"
+            return L10n.tr("Live handoff confidence")
         }
     }
 
@@ -616,12 +616,12 @@ struct ActiveHandoffView: View {
         switch spotStore.currentUserRole {
         case .leaving:
             return liveSignal.claimedBy == nil
-                ? "You’ll see the claimant here the moment another driver commits."
+                ? L10n.tr("You’ll see the claimant here the moment another driver commits.")
                 : counterpartyProfileSubtitle
         case .arriving:
-            return "Keep your status updated so the other driver trusts the handoff."
+            return L10n.tr("Keep your status updated so the other driver trusts the handoff.")
         case .none:
-            return "Identity and approach stage reduce uncertainty for both drivers."
+            return L10n.tr("Identity and approach stage reduce uncertainty for both drivers.")
         }
     }
 
@@ -642,10 +642,10 @@ struct ActiveHandoffView: View {
 
     private var counterpartyProfileSubtitle: String {
         guard let counterpartyProfile else {
-            return "Loading driver profile and arrival stage."
+            return L10n.tr("Loading driver profile and arrival stage.")
         }
 
-        return "\(counterpartyProfile.trustTierTitle) • \(counterpartyProfile.reliabilityScore)% reliability"
+        return L10n.format("%@ • %d%% reliability", counterpartyProfile.trustTierTitle, counterpartyProfile.reliabilityScore)
     }
 
     private var counterpartyPrimaryDetail: String {
@@ -659,38 +659,38 @@ struct ActiveHandoffView: View {
     private var approachStageTitle: String {
         switch liveSignal.status {
         case .posted:
-            return "Waiting"
+            return L10n.tr("Waiting")
         case .claimed:
-            return spotStore.currentUserRole == .leaving ? "Claimed" : "On the way"
+            return spotStore.currentUserRole == .leaving ? L10n.tr("Claimed") : L10n.tr("On the way")
         case .arriving:
-            return "Arriving"
+            return L10n.tr("Arriving")
         case .completed:
-            return "Complete"
+            return L10n.tr("Complete")
         case .expired:
-            return "Expired"
+            return L10n.tr("Expired")
         case .cancelled:
-            return "Cancelled"
+            return L10n.tr("Cancelled")
         }
     }
 
     private var approachStageDetail: String {
         switch liveSignal.status {
         case .posted:
-            return "No driver has committed yet, so the spot is still open."
+            return L10n.tr("No driver has committed yet, so the spot is still open.")
         case .claimed:
             if spotStore.currentUserRole == .leaving {
-                return "A nearby driver has claimed the spot. Once they update their arrival state, you’ll see that here immediately."
+                return L10n.tr("A nearby driver has claimed the spot. Once they update their arrival state, you’ll see that here immediately.")
             } else {
-                return "Your claim is live. The leaving driver now knows you’re coming."
+                return L10n.tr("Your claim is live. The leaving driver now knows you’re coming.")
             }
         case .arriving:
-            return "Arrival has been marked, so both sides have a clearer handoff moment."
+            return L10n.tr("Arrival has been marked, so both sides have a clearer handoff moment.")
         case .completed:
-            return "The handoff is complete."
+            return L10n.tr("The handoff is complete.")
         case .expired:
-            return "The countdown ran out before the handoff completed."
+            return L10n.tr("The countdown ran out before the handoff completed.")
         case .cancelled:
-            return "This handoff was cancelled."
+            return L10n.tr("This handoff was cancelled.")
         }
     }
 

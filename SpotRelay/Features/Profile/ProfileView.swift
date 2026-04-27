@@ -39,7 +39,13 @@ struct ProfileView: View {
 
     private var userIDLabel: String {
         let suffix = user.id.suffix(4).uppercased()
-        return "Driver ID • \(suffix)"
+        return L10n.format("Driver ID • %@", String(suffix))
+    }
+
+    private var profileDisplayName: String {
+        let trimmedDraftName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawName = trimmedDraftName.isEmpty ? user.displayName : trimmedDraftName
+        return rawName == "You" ? L10n.tr("You") : rawName
     }
 
     private var draftDisplayInitials: String {
@@ -122,7 +128,7 @@ struct ProfileView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .center, spacing: 10) {
-                            Text(draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? user.displayName : draftDisplayName)
+                            Text(profileDisplayName)
                                 .font(.system(size: 32, weight: .bold, design: .rounded))
                                 .foregroundStyle(SpotRelayTheme.textPrimary)
                                 .lineLimit(2)
@@ -367,7 +373,7 @@ struct ProfileView: View {
                 .lineLimit(3)
                 .minimumScaleFactor(0.82)
 
-            Text(subtitle)
+            Text(L10n.tr(subtitle))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(tint)
                 .lineLimit(3)
@@ -381,7 +387,7 @@ struct ProfileView: View {
 
     private func statCard(title: String, value: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
+            Text(L10n.tr(title))
                 .font(.caption.weight(.semibold))
                 .textCase(.uppercase)
                 .tracking(1)
@@ -395,7 +401,7 @@ struct ProfileView: View {
 
             Spacer(minLength: 0)
 
-            Text(subtitle)
+            Text(L10n.tr(subtitle))
                 .font(.caption)
                 .foregroundStyle(SpotRelayTheme.textSecondary)
                 .lineLimit(2)
@@ -413,11 +419,11 @@ struct ProfileView: View {
                 .foregroundStyle(SpotRelayTheme.warning)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(L10n.tr(title))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                Text(subtitle)
+                Text(L10n.tr(subtitle))
                     .font(.caption)
                     .foregroundStyle(SpotRelayTheme.textSecondary)
             }
@@ -459,14 +465,14 @@ struct ProfileView: View {
         do {
             guard let selectedData = try await item.loadTransferable(type: Data.self) else {
                 await MainActor.run {
-                    avatarProcessingError = "We couldn't read that photo."
+                    avatarProcessingError = L10n.tr("We couldn't read that photo.")
                 }
                 return
             }
 
             guard let normalizedAvatarData = normalizedAvatarJPEGData(from: selectedData) else {
                 await MainActor.run {
-                    avatarProcessingError = "That photo couldn't be prepared for your profile."
+                    avatarProcessingError = L10n.tr("That photo couldn't be prepared for your profile.")
                 }
                 return
             }
@@ -480,7 +486,7 @@ struct ProfileView: View {
             }
         } catch {
             await MainActor.run {
-                avatarProcessingError = "That photo couldn't be prepared for your profile."
+                avatarProcessingError = L10n.tr("That photo couldn't be prepared for your profile.")
                 selectedPhotoItem = nil
             }
         }
@@ -718,7 +724,7 @@ private struct ProfileInsightsSection: View, Equatable {
                 .lineLimit(3)
                 .minimumScaleFactor(0.82)
 
-            Text(subtitle)
+            Text(L10n.tr(subtitle))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(tint)
                 .lineLimit(3)
@@ -732,7 +738,7 @@ private struct ProfileInsightsSection: View, Equatable {
 
     private func statCard(title: String, value: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
+            Text(L10n.tr(title))
                 .font(.caption.weight(.semibold))
                 .textCase(.uppercase)
                 .tracking(1)
@@ -746,7 +752,7 @@ private struct ProfileInsightsSection: View, Equatable {
 
             Spacer(minLength: 0)
 
-            Text(subtitle)
+            Text(L10n.tr(subtitle))
                 .font(.caption)
                 .foregroundStyle(SpotRelayTheme.textSecondary)
                 .lineLimit(2)
@@ -764,11 +770,11 @@ private struct ProfileInsightsSection: View, Equatable {
                 .foregroundStyle(SpotRelayTheme.warning)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(L10n.tr(title))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                Text(subtitle)
+                Text(L10n.tr(subtitle))
                     .font(.caption)
                     .foregroundStyle(SpotRelayTheme.textSecondary)
             }

@@ -18,13 +18,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
         var badgeTitle: String {
             switch self {
             case .disabled:
-                return "Off"
+                return L10n.tr("Off")
             case .monitoring:
-                return "On"
+                return L10n.tr("On")
             case .needsAlwaysLocation, .needsMotionAccess:
-                return "Limited"
+                return L10n.tr("Limited")
             case .unsupported:
-                return "Unavailable"
+                return L10n.tr("Unavailable")
             }
         }
     }
@@ -55,13 +55,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
         var badgeTitle: String {
             switch self {
             case .low:
-                return "Low confidence"
+                return L10n.tr("Low confidence")
             case .medium:
-                return "Medium confidence"
+                return L10n.tr("Medium confidence")
             case .high:
-                return "High confidence"
+                return L10n.tr("High confidence")
             case .veryHigh:
-                return "Very high confidence"
+                return L10n.tr("Very high confidence")
             }
         }
     }
@@ -95,9 +95,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
         var summaryLabel: String {
             switch self {
             case .carAudio:
-                return "CarPlay or car audio"
+                return L10n.tr("CarPlay or car audio")
             case .bluetoothAudio:
-                return "car Bluetooth"
+                return L10n.tr("car Bluetooth")
             }
         }
     }
@@ -109,7 +109,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
         var summary: String {
             if let routeName, !routeName.isEmpty {
-                return "\(source.summaryLabel) via \(routeName)"
+                return L10n.format("%@ via %@", source.summaryLabel, routeName)
             }
             return source.summaryLabel
         }
@@ -194,37 +194,37 @@ final class SmartParkingStore: NSObject, ObservableObject {
     var statusSummary: String {
         switch status {
         case .disabled:
-            return "One-time setup. SpotRelay can learn where you parked and arm your return reminder automatically."
+            return L10n.tr("One-time setup. SpotRelay can learn where you parked and arm your return reminder automatically.")
         case .monitoring:
             if let areaLabel = lastAutoArmRecord?.areaLabel, !areaLabel.isEmpty {
                 if let confidenceLevel = lastAutoArmRecord?.confidenceLevel {
-                    return "Smart parking is on. The last automatic reminder was armed near \(areaLabel) with \(confidenceLevel.badgeTitle.lowercased())."
+                    return L10n.format("Smart parking is on. The last automatic reminder was armed near %@ with %@.", areaLabel, confidenceLevel.badgeTitle.lowercased())
                 }
-                return "Smart parking is on. The last automatic reminder was armed near \(areaLabel)."
+                return L10n.format("Smart parking is on. The last automatic reminder was armed near %@.", areaLabel)
             }
             if let recentVehicleSignal {
-                return "Smart parking is on. SpotRelay uses motion plus recent \(recentVehicleSignal.summary) evidence to spot likely parking moments."
+                return L10n.format("Smart parking is on. SpotRelay uses motion plus recent %@ evidence to spot likely parking moments.", recentVehicleSignal.summary)
             }
-            return "Smart parking is on. SpotRelay watches for likely parking moments and arms a return reminder for you."
+            return L10n.tr("Smart parking is on. SpotRelay watches for likely parking moments and arms a return reminder for you.")
         case .needsAlwaysLocation:
-            return "Keep location on Always to let SpotRelay infer parked spots even when the app isn't open."
+            return L10n.tr("Keep location on Always to let SpotRelay infer parked spots even when the app isn't open.")
         case .needsMotionAccess:
-            return "Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended."
+            return L10n.tr("Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended.")
         case .unsupported:
-            return "This device doesn't support the motion signals needed for smart parking."
+            return L10n.tr("This device doesn't support the motion signals needed for smart parking.")
         }
     }
 
     var actionTitle: String {
         switch status {
         case .disabled:
-            return "Turn On"
+            return L10n.tr("Turn On")
         case .monitoring:
-            return "Turn Off"
+            return L10n.tr("Turn Off")
         case .needsAlwaysLocation, .needsMotionAccess:
-            return "Finish Setup"
+            return L10n.tr("Finish Setup")
         case .unsupported:
-            return "Unavailable"
+            return L10n.tr("Unavailable")
         }
     }
 
@@ -357,11 +357,11 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard let recentAutomotive else { return nil }
 
         var score = 42
-        var evidence = ["recent drive"]
+        var evidence = [L10n.tr("recent drive")]
 
         if recentAutomotive.confidence == .high {
             score += 8
-            evidence.append("high-confidence automotive motion")
+            evidence.append(L10n.tr("high-confidence automotive motion"))
         } else if recentAutomotive.confidence == .medium {
             score += 4
         }
@@ -375,17 +375,17 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let timeSinceDriveStart = arrivalDate.timeIntervalSince(recentAutomotive.startDate)
         if timeSinceDriveStart <= 5 * 60 {
             score += 10
-            evidence.append("arrived soon after the drive ended")
+            evidence.append(L10n.tr("arrived soon after the drive ended"))
         } else if timeSinceDriveStart <= 10 * 60 {
             score += 6
         }
 
         if settledActivities.contains(where: \.stationary) {
             score += 18
-            evidence.append("stationary after arrival")
+            evidence.append(L10n.tr("stationary after arrival"))
         } else if settledActivities.contains(where: \.walking) {
             score += 14
-            evidence.append("walking after parking")
+            evidence.append(L10n.tr("walking after parking"))
         }
 
         let usedVehicleSignal: Bool
