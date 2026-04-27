@@ -112,6 +112,7 @@ struct AppView: View {
             scheduleReviewPromptIfAppropriate()
         }
         .task {
+            spotStore.prepareLocationTracking(requestIfNeeded: false)
             await parkingReminderStore.refreshReminderState()
             smartParkingStore.refreshPermissions()
             await pushNotificationStore.refreshAuthorizationStatus()
@@ -119,6 +120,7 @@ struct AppView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
+                spotStore.prepareLocationTracking(requestIfNeeded: false)
                 await parkingReminderStore.refreshReminderState()
                 smartParkingStore.refreshPermissions()
                 await pushNotificationStore.refreshAuthorizationStatus()

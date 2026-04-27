@@ -376,6 +376,9 @@ final class SpotStore: NSObject, ObservableObject {
         userCoordinate = coordinate
         repository.seedPreviewSpotsIfNeeded(around: coordinate)
         refreshAreaLabelIfNeeded(for: coordinate)
+        Task {
+            await parkingReminderStore.verifyReturnProximityFallback(at: coordinate)
+        }
     }
 
     private func refreshAreaLabelIfNeeded(for coordinate: CLLocationCoordinate2D) {

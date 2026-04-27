@@ -24,10 +24,14 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
 
         func coordinateDistanceText(from coordinate: CLLocationCoordinate2D) -> String {
+            let meters = Int(distanceMeters(from: coordinate).rounded())
+            return "\(meters)m"
+        }
+
+        func distanceMeters(from coordinate: CLLocationCoordinate2D) -> CLLocationDistance {
             let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
             let destination = CLLocation(latitude: self.coordinate.latitude, longitude: self.coordinate.longitude)
-            let meters = Int(origin.distance(from: destination).rounded())
-            return "\(meters)m"
+            return origin.distance(from: destination)
         }
     }
 
@@ -92,7 +96,10 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
     }
 
-    nonisolated static let defaultRadiusMeters: Double = 150
+    nonisolated static let defaultRadiusMeters: Double = 10
+    nonisolated private static let fallbackExitDistanceMeters: Double = 25
+    nonisolated private static let fallbackReturnDistanceMeters: Double = 15
+    nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
 
     @Published private(set) var activeReminder: Reminder?
@@ -131,6 +138,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
 
         self.locationManager.delegate = self
 
+        normalizeReminderRadiiIfNeeded()
         removeExpiredSavedLocationIfNeeded()
 
         Task {
@@ -191,8 +199,24 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     func refreshReminderState() async {
         activeReminder = Self.loadReminder(from: defaults, key: Keys.activeReminder)
         savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
+        normalizeReminderRadiiIfNeeded()
         removeExpiredSavedLocationIfNeeded()
         await restoreMonitoringIfNeeded()
+    }
+
+    func verifyReturnProximityFallback(at coordinate: CLLocationCoordinate2D) async {
+        guard let reminder = activeReminder else { return }
+
+        let distance = reminder.distanceMeters(from: coordinate)
+        if distance >= Self.fallbackExitDistanceMeters {
+            handleRegionExit()
+            return
+        }
+
+        let returnDistance = max(reminder.radiusMeters + Self.radiusToleranceMeters, Self.fallbackReturnDistanceMeters)
+        if hasExitedRegion, distance <= returnDistance {
+            await handleRegionEntry()
+        }
     }
 
     private func restoreMonitoringIfNeeded() async {
@@ -212,11 +236,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             return
         }
 
-        let alreadyMonitoring = locationManager.monitoredRegions.contains { region in
+        let monitoredReminderRegion = locationManager.monitoredRegions.first { region in
             region.identifier == Keys.regionIdentifier
         }
 
-        if !alreadyMonitoring {
+        if let monitoredReminderRegion, !monitoredReminderRegion.matches(reminder) {
+            locationManager.stopMonitoring(for: monitoredReminderRegion)
+        }
+
+        if monitoredReminderRegion == nil || monitoredReminderRegion?.matches(reminder) == false {
             let region = monitoredRegion(for: reminder)
             locationManager.startMonitoring(for: region)
         }
@@ -326,6 +354,24 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         return hasExitedRegion ? .exitedWaitingForReturn : .armed
     }
 
+    private func normalizeReminderRadiiIfNeeded() {
+        if let activeReminder {
+            let normalized = activeReminder.normalizedRadius()
+            if normalized != activeReminder {
+                self.activeReminder = normalized
+                persist(normalized, key: Keys.activeReminder)
+            }
+        }
+
+        if let savedParkedLocation {
+            let normalized = savedParkedLocation.normalizedRadius()
+            if normalized != savedParkedLocation {
+                self.savedParkedLocation = normalized
+                persist(normalized, key: Keys.savedParkedLocation)
+            }
+        }
+    }
+
     private func removeExpiredSavedLocationIfNeeded(now: Date = .now) {
         guard let savedParkedLocation else { return }
         guard now.timeIntervalSince(savedParkedLocation.createdAt) > Self.parkedLocationRetentionInterval else { return }
@@ -377,5 +423,37 @@ extension ParkingReminderStore: CLLocationManagerDelegate {
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: any Swift.Error) {
+    }
+}
+
+private extension ParkingReminderStore.Reminder {
+    func normalizedRadius() -> Self {
+        guard abs(radiusMeters - ParkingReminderStore.defaultRadiusMeters) > ParkingReminderStore.radiusToleranceMeters else {
+            return self
+        }
+
+        return .init(
+            latitude: latitude,
+            longitude: longitude,
+            createdAt: createdAt,
+            areaLabel: areaLabel,
+            radiusMeters: ParkingReminderStore.defaultRadiusMeters
+        )
+    }
+}
+
+private extension CLRegion {
+    func matches(_ reminder: ParkingReminderStore.Reminder) -> Bool {
+        guard let region = self as? CLCircularRegion else { return false }
+        let centerDistance = CLLocation(
+            latitude: region.center.latitude,
+            longitude: region.center.longitude
+        ).distance(from: CLLocation(
+            latitude: reminder.latitude,
+            longitude: reminder.longitude
+        ))
+
+        return centerDistance <= ParkingReminderStore.radiusToleranceMeters &&
+            abs(region.radius - reminder.radiusMeters) <= ParkingReminderStore.radiusToleranceMeters
     }
 }
