@@ -21,6 +21,7 @@ final class SpotRelayAppDelegate: NSObject, UIApplicationDelegate {
         #if canImport(FirebaseMessaging)
         if FirebaseApp.app() != nil {
             Messaging.messaging().delegate = self
+            refreshFCMTokenIfPossible()
         }
         #endif
 
@@ -34,7 +35,12 @@ final class SpotRelayAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         #if canImport(FirebaseMessaging)
         if FirebaseApp.app() != nil {
-            Messaging.messaging().apnsToken = deviceToken
+            #if DEBUG
+            Messaging.messaging().setAPNSToken(deviceToken, type: .sandbox)
+            #else
+            Messaging.messaging().setAPNSToken(deviceToken, type: .prod)
+            #endif
+            refreshFCMTokenIfPossible()
         }
         #endif
 
@@ -91,6 +97,22 @@ extension SpotRelayAppDelegate: UNUserNotificationCenterDelegate {
         completionHandler()
     }
 }
+
+#if canImport(FirebaseMessaging)
+private extension SpotRelayAppDelegate {
+    func refreshFCMTokenIfPossible() {
+        Messaging.messaging().token { token, error in
+            Task { @MainActor in
+                if let error {
+                    PushNotificationStore.shared.handleRemoteRegistrationFailure(error)
+                } else {
+                    PushNotificationStore.shared.handleFCMToken(token)
+                }
+            }
+        }
+    }
+}
+#endif
 
 #if canImport(FirebaseMessaging)
 extension SpotRelayAppDelegate: MessagingDelegate {
