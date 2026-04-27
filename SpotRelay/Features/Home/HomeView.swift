@@ -19,6 +19,7 @@ struct HomeView: View {
     @State private var parkingReminderAlert: HomeViewAlert?
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
+    @State private var parkedLocationToastMessage: String?
     @GestureState private var nearbySheetDragTranslation: CGFloat = 0
 
     var body: some View {
@@ -26,6 +27,13 @@ struct HomeView: View {
             mapLayer
             overlayGradient
             content
+            if let parkedLocationToastMessage {
+                parkedLocationToast(message: parkedLocationToastMessage)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, max(nearbySheetRenderedBottomInset + 18, 120))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
+            }
         }
         .background(SpotRelayTheme.background.ignoresSafeArea())
         .navigationBarHidden(true)
@@ -131,6 +139,13 @@ struct HomeView: View {
                     }
                 }
 
+                if parkingReminderStore.savedParkedLocation != nil {
+                    HStack {
+                        Spacer()
+                        parkedLocationShortcutButton
+                    }
+                }
+
                 if shouldShowSmartParkingButton {
                     HStack {
                         Spacer()
@@ -168,6 +183,27 @@ struct HomeView: View {
             shadowY: 8
         )
         .accessibilityLabel("Set up smart parking")
+    }
+
+    private var parkedLocationShortcutButton: some View {
+        Button {
+            focusOnSavedParkedLocation()
+        } label: {
+            Text("P")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+                .frame(width: 46, height: 46)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 18,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+        .accessibilityLabel("Center on parked location")
     }
 
     private var notificationButton: some View {
@@ -223,9 +259,13 @@ struct HomeView: View {
                 )
 
                 if spotStore.currentUser.shareStars > 0 {
-                    Text("\(spotStore.currentUser.shareStars)")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 6)
+                    HStack(spacing: 1) {
+                        ForEach(0..<homeProfileStarBadgeCount, id: \.self) { _ in
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 7, weight: .bold))
+                        }
+                    }
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 3)
                         .background(SpotRelayTheme.warning, in: Capsule())
                         .foregroundStyle(.white)
@@ -235,6 +275,19 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open profile")
+    }
+
+    private var homeProfileStarBadgeCount: Int {
+        switch spotStore.currentUser.shareStars {
+        case 1..<10:
+            return 1
+        case 10..<50:
+            return 2
+        case 50...:
+            return 3
+        default:
+            return 0
+        }
     }
 
     private var shouldShowSmartParkingButton: Bool {
@@ -414,14 +467,6 @@ struct HomeView: View {
 
     private var expandedSheetContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let parkedLocation = parkingReminderStore.savedParkedLocation {
-                parkedLocationCard(parkedLocation)
-            }
-
-            if parkingReminderStore.debugState.shouldDisplay {
-                parkingReminderDebugCard(parkingReminderStore.debugState)
-            }
-
             if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
                 locationPendingCard
             } else {
@@ -733,6 +778,22 @@ struct HomeView: View {
         focusMap(animated: true)
     }
 
+    private func focusOnSavedParkedLocation() {
+        guard let reminder = parkingReminderStore.savedParkedLocation else { return }
+
+        collapseNearbySheetIfNeeded()
+        setCameraPosition(
+            .region(
+                MKCoordinateRegion(
+                    center: reminder.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
+                )
+            ),
+            animated: true
+        )
+        //showParkedLocationToast(for: reminder)
+    }
+
     private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
         if animated {
             withAnimation(.easeInOut(duration: 0.35)) {
@@ -799,6 +860,49 @@ struct HomeView: View {
         DispatchQueue.main.async {
             withAnimation{
                 isNearbySheetExpanded = false
+            }
+        }
+    }
+
+    private var nearbySheetRenderedBottomInset: CGFloat {
+        isNearbySheetExpanded ? expandedSheetRenderedTotalHeight : 112
+    }
+
+    private func parkedLocationToast(message: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "parkingsign.circle.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: SpotRelayTheme.shadow, radius: 16, y: 8)
+    }
+
+    private func showParkedLocationToast(for reminder: ParkingReminderStore.Reminder) {
+        let message: String
+        if let areaLabel = reminder.areaLabel, !areaLabel.isEmpty {
+            message = "Centered on your parked spot near \(areaLabel)."
+        } else {
+            message = "Centered on your parked spot."
+        }
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+            parkedLocationToastMessage = message
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.2))
+            guard parkedLocationToastMessage == message else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                parkedLocationToastMessage = nil
             }
         }
     }

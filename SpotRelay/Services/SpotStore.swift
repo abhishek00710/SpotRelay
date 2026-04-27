@@ -4,6 +4,11 @@ import Foundation
 import MapKit
 import Network
 
+struct ReviewPromptRequest: Equatable {
+    let id = UUID()
+    let successfulHandoffCount: Int
+}
+
 @MainActor
 final class SpotStore: NSObject, ObservableObject {
     let nearbySearchRadiusMeters = 500
@@ -15,6 +20,8 @@ final class SpotStore: NSObject, ObservableObject {
     @Published private(set) var currentAreaLabel = "Nearby"
     @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published private(set) var isNetworkAvailable = true
+    @Published private(set) var userProfiles: [String: AppUser] = [:]
+    @Published private(set) var reviewPromptRequest: ReviewPromptRequest?
     @Published var activeHandoffID: String?
     @Published var errorBanner: SpotRelayErrorBannerState?
     let backendMode: SpotRelayBackendMode
@@ -115,6 +122,9 @@ final class SpotStore: NSObject, ObservableObject {
         if userID == currentUser.id {
             return currentUser.displayName
         }
+        if let profile = userProfiles[userID] {
+            return profile.displayName
+        }
 
         let normalized = userID
             .replacingOccurrences(of: "-", with: " ")
@@ -133,6 +143,18 @@ final class SpotStore: NSObject, ObservableObject {
             .joined(separator: " ")
 
         return normalized.isEmpty ? "Nearby driver" : normalized
+    }
+
+    func profile(for userID: String?) -> AppUser? {
+        guard let userID else { return nil }
+        if userID == currentUser.id {
+            return currentUser
+        }
+        return userProfiles[userID]
+    }
+
+    func observeProfile(for userID: String?) {
+        userIdentity.observeProfile(for: userID)
     }
 
     func refreshStatuses(now: Date = .now) {
@@ -268,6 +290,9 @@ final class SpotStore: NSObject, ObservableObject {
         do {
             _ = try await repository.completeHandoff(id: activeHandoffID, userID: currentUser.id, success: success)
             currentUser = userIdentity.recordCompletedHandoff(success: success, as: roleAtCompletion)
+            if success {
+                reviewPromptRequest = ReviewPromptRequest(successfulHandoffCount: currentUser.successfulHandoffs)
+            }
             self.activeHandoffID = nil
             clearErrorBanner()
             return true
@@ -308,16 +333,35 @@ final class SpotStore: NSObject, ObservableObject {
                 self?.currentUser = latestUser
             }
             .store(in: &cancellables)
+
+        userIdentity.userProfilesPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] latestProfiles in
+                self?.userProfiles = latestProfiles
+            }
+            .store(in: &cancellables)
     }
 
     private func applyRepositorySpots(_ latestSpots: [ParkingSpotSignal]) {
         spots = latestSpots
+        observeProfiles(for: latestSpots)
 
         guard let activeHandoffID else { return }
         let stillActive = latestSpots.contains { $0.id == activeHandoffID && $0.isActive }
         if !stillActive {
             self.activeHandoffID = nil
         }
+    }
+
+    private func observeProfiles(for latestSpots: [ParkingSpotSignal]) {
+        let userIDs = latestSpots.reduce(into: Set<String>()) { result, signal in
+            result.insert(signal.createdBy)
+            if let claimedBy = signal.claimedBy {
+                result.insert(claimedBy)
+            }
+        }
+
+        userIDs.forEach { userIdentity.observeProfile(for: $0) }
     }
 
     private func startLocationTrackingIfAuthorized() {

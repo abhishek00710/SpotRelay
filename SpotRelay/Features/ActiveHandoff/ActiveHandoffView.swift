@@ -50,6 +50,9 @@ struct ActiveHandoffView: View {
                     animated: false
                 )
             }
+            .task(id: counterpartyUserID) {
+                spotStore.observeProfile(for: counterpartyUserID)
+            }
             .task {
                 await spotStore.runRefreshLoop()
             }
@@ -78,31 +81,25 @@ struct ActiveHandoffView: View {
     private var counterpartyPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center, spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(approachAccent.opacity(0.16))
-                        .frame(width: 48, height: 48)
-
-                    Image(systemName: panelSymbol)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(approachAccent)
-                }
+                counterpartyAvatar(size: 54)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(panelTitle)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
+                        .lineLimit(2)
 
                     Text(panelSubtitle)
                         .font(.subheadline)
                         .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
             }
 
             HStack(spacing: 12) {
-                detailPill(title: "Driver", value: counterpartyName)
+                detailPill(title: counterpartyProfile == nil ? "Driver" : "Stars", value: counterpartyPrimaryDetail)
                 detailPill(title: "Stage", value: approachStageTitle)
             }
 
@@ -119,6 +116,44 @@ struct ActiveHandoffView: View {
             shadowRadius: 14,
             shadowY: 8
         )
+    }
+
+    @ViewBuilder
+    private func counterpartyAvatar(size: CGFloat) -> some View {
+        if let avatarJPEGData = counterpartyProfile?.avatarJPEGData,
+           let avatarImage = UIImage(data: avatarJPEGData) {
+            Image(uiImage: avatarImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .strokeBorder(SpotRelayTheme.softStroke, lineWidth: 1.4)
+                )
+                .shadow(color: SpotRelayTheme.shadow, radius: 12, y: 7)
+        } else {
+            ZStack {
+                let fillStyle = counterpartyProfile == nil
+                    ? AnyShapeStyle(approachAccent.opacity(0.16))
+                    : AnyShapeStyle(SpotRelayTheme.orbGradient)
+
+                Circle()
+                    .fill(fillStyle)
+                    .frame(width: size, height: size)
+
+                if let counterpartyProfile {
+                    Text(counterpartyProfile.displayInitials)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                } else {
+                    Image(systemName: panelSymbol)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(approachAccent)
+                }
+            }
+            .shadow(color: counterpartyProfile == nil ? .clear : SpotRelayTheme.shadow, radius: 12, y: 7)
+        }
     }
 
     private var heroCard: some View {
@@ -552,20 +587,24 @@ struct ActiveHandoffView: View {
     }
 
     private var counterpartyName: String {
+        if let counterpartyProfile {
+            return counterpartyProfile.displayName
+        }
+
         switch spotStore.currentUserRole {
         case .leaving:
-            return spotStore.displayName(for: liveSignal.claimedBy) ?? "Waiting for claim"
+            return liveSignal.claimedBy == nil ? "Waiting for claim" : "Nearby driver"
         case .arriving:
-            return spotStore.displayName(for: liveSignal.createdBy) ?? "Leaving driver"
+            return "Leaving driver"
         case .none:
-            return spotStore.displayName(for: liveSignal.claimedBy) ?? "Nearby driver"
+            return "Nearby driver"
         }
     }
 
     private var panelTitle: String {
         switch spotStore.currentUserRole {
         case .leaving:
-            return liveSignal.claimedBy == nil ? "Waiting for someone to claim" : "Someone claimed your spot"
+            return liveSignal.claimedBy == nil ? "Waiting for someone to claim" : "\(counterpartyName) claimed your spot"
         case .arriving:
             return "The leaving driver can see you"
         case .none:
@@ -578,12 +617,43 @@ struct ActiveHandoffView: View {
         case .leaving:
             return liveSignal.claimedBy == nil
                 ? "You’ll see the claimant here the moment another driver commits."
-                : "Clear claimant identity and arrival stage make the handoff feel safer."
+                : counterpartyProfileSubtitle
         case .arriving:
             return "Keep your status updated so the other driver trusts the handoff."
         case .none:
             return "Identity and approach stage reduce uncertainty for both drivers."
         }
+    }
+
+    private var counterpartyUserID: String? {
+        switch spotStore.currentUserRole {
+        case .leaving:
+            return liveSignal.claimedBy
+        case .arriving:
+            return liveSignal.createdBy
+        case .none:
+            return liveSignal.claimedBy ?? liveSignal.createdBy
+        }
+    }
+
+    private var counterpartyProfile: AppUser? {
+        spotStore.profile(for: counterpartyUserID)
+    }
+
+    private var counterpartyProfileSubtitle: String {
+        guard let counterpartyProfile else {
+            return "Loading driver profile and arrival stage."
+        }
+
+        return "\(counterpartyProfile.trustTierTitle) • \(counterpartyProfile.reliabilityScore)% reliability"
+    }
+
+    private var counterpartyPrimaryDetail: String {
+        guard let counterpartyProfile else {
+            return counterpartyName
+        }
+
+        return "\(counterpartyProfile.shareStars)"
     }
 
     private var approachStageTitle: String {

@@ -1,28 +1,31 @@
 # SpotRelay
 
-SpotRelay is an iOS prototype for real-time parking spot handoffs in dense urban areas. A driver who is about to leave can publish a short countdown, and a nearby driver can claim that spot before circling the block again.
+SpotRelay is an iOS app for real-time parking spot handoffs in dense urban areas. A driver who is about to leave can publish a short countdown, and a nearby driver can claim that spot before circling the block again.
 
 ## What It Does
 
 - Shows nearby active parking handoff signals on a map
 - Lets a leaving driver post a spot with a 2, 5, or 10 minute timer
 - Lets an arriving driver claim a spot and move into a live handoff state
-- Tracks simple completion and cancellation states to shape future trust features
+- Tracks completion, cancellation, user profiles, and share stars to build lightweight trust
+- Remembers parked locations and can nudge drivers when they return to their car
+- Sends Firebase-backed push notifications for important handoff lifecycle changes
 
 ## Current Status
 
-This repository is an early product prototype built with SwiftUI and MapKit. It now has a backend-ready architecture:
+This repository is a v1 release-candidate iOS app built with SwiftUI, MapKit, Firebase Auth, Firestore, Firebase Messaging, and Firebase Functions.
 
-- `LocalSpotRepository` keeps the app fully runnable with demo realtime data
-- `FirebaseSpotRepository` is scaffolded for Auth + Firestore
-- the UI still works without Firebase until you add your project configuration
+- `FirebaseSpotRepository` powers realtime multi-device handoffs.
+- `LocalSpotRepository` keeps the app runnable in local demo mode.
+- Firestore rules protect spot lifecycle transitions, user profiles, and device tokens.
+- Firebase Functions send server-triggered handoff notifications.
 
 ## Tech Stack
 
 - SwiftUI
 - MapKit
-- Xcode 16+
-- iOS 18+
+- Xcode 17+
+- iOS 26+
 
 ## Project Structure
 
@@ -38,18 +41,18 @@ SpotRelay/
 
 1. Open `SpotRelay.xcodeproj` in Xcode.
 2. Select the `SpotRelay` scheme.
-3. Run on an iPhone simulator or device with iOS 18 or later.
+3. Run on an iPhone simulator or device with iOS 26 or later.
 
 ## Firebase Setup
 
-SpotRelay is ready to switch from the local repository to Firebase once the app is connected to a real Firebase project.
+SpotRelay automatically uses Firebase when the Firebase SDKs and `GoogleService-Info.plist` are available. Without Firebase, it falls back to local demo data.
 
 1. In Firebase, create an Apple app that matches this bundle identifier:
    `com.SAAAin.SpotRelay`
 2. Download `GoogleService-Info.plist`.
 3. Add the file to the `SpotRelay/SpotRelay` app target in Xcode.
 4. In Firebase Authentication, enable `Anonymous` sign-in.
-5. In Firestore, create a `spots` collection.
+5. In Firestore, create the database and publish the rules in [firestore.rules](firestore.rules).
 6. Open the project in Xcode and let Swift Package Manager resolve:
    - `FirebaseCore`
    - `FirebaseAuth`
@@ -75,7 +78,7 @@ SpotRelay now requests notification permission during onboarding, registers with
 
 `users/{uid}/devices/{installationID}`
 
-Each device document includes the current FCM token, APNs token, notification authorization status, bundle ID, and timestamps so a future notification sender can target the user's active iOS devices.
+Each device document includes the current FCM token, APNs token, notification authorization status, bundle ID, and timestamps so Firebase Functions can target the user's active iOS devices.
 
 For local device testing:
 
@@ -118,12 +121,26 @@ The scaffold uses Cloud Functions for Firebase 2nd gen and Node.js 20. It is int
 - analytics around delivery/open rates
 - retry policies for non-terminal messaging failures
 
+## App Store Readiness
+
+Before submitting a new build to App Store Connect:
+
+- Confirm the bundle identifier is `com.SAAAin.SpotRelay`.
+- Increment `CURRENT_PROJECT_VERSION` for every upload.
+- Archive with a distribution profile that includes Push Notifications.
+- Verify the archive has production push entitlement behavior for APNs.
+- Complete App Store privacy labels to match the app's privacy manifest: precise location, user ID, name, photos/videos for profile avatars, and device ID for push/device tokens. Do not mark tracking unless tracking is added later.
+- Publish the latest Firestore rules and deploy the latest Firebase Functions.
+- Enable Firestore TTL on `spots.cleanupAt`.
+- Provide a public privacy policy URL and support URL in App Store Connect. A draft privacy policy is included in [PRIVACY.md](PRIVACY.md).
+- Test background location and parked-car reminders on a real device before review.
+
 ## Roadmap
 
-- Finish Firestore transactions and security rules
-- Add push notifications and claim expiry
-- Introduce reliability scoring and handoff history
-- Polish onboarding and empty/error states
+- Add deeper reliability scoring and handoff history
+- Add richer notification deep links
+- Add production analytics for claim, cancel, and completion rates
+- Continue real-world beta testing in dense parking areas
 
 ## Contributing
 

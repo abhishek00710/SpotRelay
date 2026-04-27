@@ -17,6 +17,9 @@ private func sanitizedProfileDisplayName(_ rawValue: String) -> String {
 protocol UserIdentityProviding: AnyObject {
     var currentUser: AppUser { get }
     var currentUserPublisher: AnyPublisher<AppUser, Never> { get }
+    var userProfilesPublisher: AnyPublisher<[String: AppUser], Never> { get }
+    func profile(for userID: String) -> AppUser?
+    func observeProfile(for userID: String?)
     func recordCompletedHandoff(success: Bool, as role: HandoffRole?) -> AppUser
     func updateProfile(displayName: String, avatarJPEGData: Data?) -> AppUser
 }
@@ -25,6 +28,7 @@ protocol UserIdentityProviding: AnyObject {
 final class LocalUserIdentityStore: UserIdentityProviding {
     private let defaults: UserDefaults
     private let subject: CurrentValueSubject<AppUser, Never>
+    private let profilesSubject: CurrentValueSubject<[String: AppUser], Never>
     private(set) var currentUser: AppUser
 
     private enum Keys {
@@ -57,10 +61,24 @@ final class LocalUserIdentityStore: UserIdentityProviding {
             avatarJPEGData: defaults.data(forKey: Keys.avatarJPEGData)
         )
         subject = CurrentValueSubject(currentUser)
+        profilesSubject = CurrentValueSubject([currentUser.id: currentUser])
     }
 
     var currentUserPublisher: AnyPublisher<AppUser, Never> {
         subject.eraseToAnyPublisher()
+    }
+
+    var userProfilesPublisher: AnyPublisher<[String: AppUser], Never> {
+        profilesSubject.eraseToAnyPublisher()
+    }
+
+    func profile(for userID: String) -> AppUser? {
+        userID == currentUser.id ? currentUser : nil
+    }
+
+    func observeProfile(for userID: String?) {
+        guard userID == currentUser.id else { return }
+        profilesSubject.send([currentUser.id: currentUser])
     }
 
     func recordCompletedHandoff(success: Bool, as role: HandoffRole?) -> AppUser {
@@ -77,6 +95,7 @@ final class LocalUserIdentityStore: UserIdentityProviding {
         }
 
         subject.send(currentUser)
+        profilesSubject.send([currentUser.id: currentUser])
         return currentUser
     }
 
@@ -85,6 +104,7 @@ final class LocalUserIdentityStore: UserIdentityProviding {
         currentUser.avatarJPEGData = avatarJPEGData
         persistLocally(currentUser)
         subject.send(currentUser)
+        profilesSubject.send([currentUser.id: currentUser])
         return currentUser
     }
 
@@ -108,8 +128,11 @@ final class LocalUserIdentityStore: UserIdentityProviding {
 final class FirebaseUserIdentityStore: UserIdentityProviding {
     private let defaults: UserDefaults
     private let subject: CurrentValueSubject<AppUser, Never>
+    private let profilesSubject: CurrentValueSubject<[String: AppUser], Never>
     private var authStateListener: AuthStateDidChangeListenerHandle?
     private var profileListener: ListenerRegistration?
+    private var profileListeners: [String: ListenerRegistration] = [:]
+    private var knownProfiles: [String: AppUser] = [:]
     private(set) var currentUser: AppUser
 
     private enum Keys {
@@ -142,6 +165,8 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
 
         self.currentUser = initialUser
         self.subject = CurrentValueSubject(initialUser)
+        self.knownProfiles = [initialUser.id: initialUser]
+        self.profilesSubject = CurrentValueSubject(knownProfiles)
 
         authStateListener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             guard let self, let user else { return }
@@ -162,10 +187,38 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
             Auth.auth().removeStateDidChangeListener(authStateListener)
         }
         profileListener?.remove()
+        profileListeners.values.forEach { $0.remove() }
     }
 
     var currentUserPublisher: AnyPublisher<AppUser, Never> {
         subject.eraseToAnyPublisher()
+    }
+
+    var userProfilesPublisher: AnyPublisher<[String: AppUser], Never> {
+        profilesSubject.eraseToAnyPublisher()
+    }
+
+    func profile(for userID: String) -> AppUser? {
+        knownProfiles[userID]
+    }
+
+    func observeProfile(for userID: String?) {
+        guard let userID, !userID.isEmpty else { return }
+        if userID == currentUser.id {
+            updateKnownProfile(currentUser)
+            return
+        }
+        guard profileListeners[userID] == nil else { return }
+
+        let listener = userDocument(userID: userID).addSnapshotListener { [weak self] snapshot, _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard let data = snapshot?.data() else { return }
+                self.applyRemoteProfileData(data, userID: userID)
+            }
+        }
+
+        profileListeners[userID] = listener
     }
 
     func recordCompletedHandoff(success: Bool, as role: HandoffRole?) -> AppUser {
@@ -182,6 +235,7 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         }
 
         subject.send(currentUser)
+        updateKnownProfile(currentUser)
         persistCurrentUserProfile()
         return currentUser
     }
@@ -190,6 +244,7 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         currentUser.displayName = sanitizedProfileDisplayName(displayName)
         currentUser.avatarJPEGData = avatarJPEGData
         subject.send(currentUser)
+        updateKnownProfile(currentUser)
         persistCurrentUserProfile()
         return currentUser
     }
@@ -206,6 +261,7 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
                 avatarJPEGData: currentUser.avatarJPEGData
             )
             subject.send(currentUser)
+            updateKnownProfile(currentUser)
         }
 
         startProfileListener(for: userID)
@@ -218,23 +274,40 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
             guard let self else { return }
             Task { @MainActor in
                 guard let data = snapshot?.data() else { return }
-                self.applyRemoteProfileData(data)
+                self.applyCurrentUserRemoteProfileData(data)
             }
         }
     }
 
-    private func applyRemoteProfileData(_ data: [String: Any]) {
-        let joinedAt = (data["joinedAt"] as? Timestamp)?.dateValue() ?? currentUser.joinedAt
-        let successfulHandoffs = data["successfulHandoffs"] as? Int ?? currentUser.successfulHandoffs
-        let successfulShares = data["successfulShares"] as? Int ?? currentUser.successfulShares
-        let noShowCount = data["noShowCount"] as? Int ?? currentUser.noShowCount
-        let avatarJPEGData = (data["avatarBase64"] as? String).flatMap { Data(base64Encoded: $0) }
-        let displayName = (data["displayName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? sanitizedProfileDisplayName(data["displayName"] as? String ?? currentUser.displayName)
-            : currentUser.displayName
+    private func applyCurrentUserRemoteProfileData(_ data: [String: Any]) {
+        let updatedUser = userProfile(from: data, userID: currentUser.id, fallback: currentUser)
 
-        let updatedUser = AppUser(
-            id: currentUser.id,
+        guard updatedUser != currentUser else { return }
+        currentUser = updatedUser
+        persistLocally(updatedUser)
+        subject.send(updatedUser)
+        updateKnownProfile(updatedUser)
+    }
+
+    private func applyRemoteProfileData(_ data: [String: Any], userID: String) {
+        let fallback = knownProfiles[userID]
+        let updatedUser = userProfile(from: data, userID: userID, fallback: fallback)
+        updateKnownProfile(updatedUser)
+    }
+
+    private func userProfile(from data: [String: Any], userID: String, fallback: AppUser?) -> AppUser {
+        let joinedAt = (data["joinedAt"] as? Timestamp)?.dateValue() ?? fallback?.joinedAt ?? .now
+        let successfulHandoffs = data["successfulHandoffs"] as? Int ?? fallback?.successfulHandoffs ?? 0
+        let successfulShares = data["successfulShares"] as? Int ?? fallback?.successfulShares ?? 0
+        let noShowCount = data["noShowCount"] as? Int ?? fallback?.noShowCount ?? 0
+        let avatarJPEGData = (data["avatarBase64"] as? String).flatMap { Data(base64Encoded: $0) }
+        let remoteDisplayName = data["displayName"] as? String
+        let displayName = remoteDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? sanitizedProfileDisplayName(remoteDisplayName ?? fallback?.displayName ?? "Nearby driver")
+            : fallback?.displayName ?? "Nearby driver"
+
+        return AppUser(
+            id: userID,
             displayName: displayName,
             joinedAt: joinedAt,
             successfulHandoffs: successfulHandoffs,
@@ -242,11 +315,11 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
             noShowCount: noShowCount,
             avatarJPEGData: avatarJPEGData
         )
+    }
 
-        guard updatedUser != currentUser else { return }
-        currentUser = updatedUser
-        persistLocally(updatedUser)
-        subject.send(updatedUser)
+    private func updateKnownProfile(_ user: AppUser) {
+        knownProfiles[user.id] = user
+        profilesSubject.send(knownProfiles)
     }
 
     private func persistCurrentUserProfile() {

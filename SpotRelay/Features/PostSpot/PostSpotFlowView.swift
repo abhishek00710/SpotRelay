@@ -3,6 +3,29 @@ import SwiftUI
 import Combine
 
 struct PostSpotFlowView: View {
+    private enum ShareSource: String {
+        case parked
+        case current
+
+        var title: String {
+            switch self {
+            case .parked:
+                return "Parked spot"
+            case .current:
+                return "Current location"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .parked:
+                return "parkingsign.circle.fill"
+            case .current:
+                return "location.fill"
+            }
+        }
+    }
+
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var spotStore: SpotStore
     @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
@@ -10,6 +33,7 @@ struct PostSpotFlowView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var pendingRecenterOnLocationUpdate = true
     @State private var isMapVisible = true
+    @State private var selectedShareSource: ShareSource = .parked
 
     private let durations = [2, 5, 10]
 
@@ -24,14 +48,20 @@ struct PostSpotFlowView: View {
             }
             .padding(20)
             .task {
+                syncSelectedShareSource()
                 spotStore.prepareLocationTracking(requestIfNeeded: false)
                 focusOnShareLocation(animated: false)
             }
         }
         .onReceive(spotStore.$userCoordinate.dropFirst()) { _ in
+            syncSelectedShareSource()
             guard pendingRecenterOnLocationUpdate else { return }
             focusOnShareLocation(animated: true)
             pendingRecenterOnLocationUpdate = false
+        }
+        .onReceive(parkingReminderStore.$savedParkedLocation.dropFirst()) { _ in
+            syncSelectedShareSource()
+            focusOnShareLocation(animated: true)
         }
         .spotRelayErrorBanner(using: spotStore)
         .onDisappear {
@@ -90,7 +120,7 @@ struct PostSpotFlowView: View {
     }
 
     private var durationPicker: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             Text("Pick your timing")
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(SpotRelayTheme.textPrimary)
@@ -119,17 +149,89 @@ struct PostSpotFlowView: View {
                     .buttonStyle(.plain)
                 }
             }
+
+            if shouldShowShareSourcePicker {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Share from")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    HStack(spacing: 12) {
+                        shareSourceButton(.parked)
+                        shareSourceButton(.current)
+                    }
+                }
+            }
         }
         .padding(20)
         .glassPanel(cornerRadius: 28, tint: SpotRelayTheme.glassTint, stroke: SpotRelayTheme.softStroke, shadow: SpotRelayTheme.rowShadow, shadowRadius: 16, shadowY: 8)
     }
 
     private var shareCoordinate: CLLocationCoordinate2D? {
-        parkingReminderStore.savedParkedLocation?.coordinate ?? spotStore.userCoordinate
+        switch activeShareSource {
+        case .parked:
+            return parkingReminderStore.savedParkedLocation?.coordinate
+        case .current:
+            return spotStore.userCoordinate
+        }
     }
 
     private var isUsingParkedLocation: Bool {
+        activeShareSource == .parked
+    }
+
+    private var shouldShowShareSourcePicker: Bool {
         parkingReminderStore.savedParkedLocation != nil
+    }
+
+    private var activeShareSource: ShareSource {
+        if parkingReminderStore.savedParkedLocation == nil {
+            return .current
+        }
+
+        if selectedShareSource == .current {
+            return .current
+        }
+
+        return .parked
+    }
+
+    private func shareSourceButton(_ source: ShareSource) -> some View {
+        Button {
+            selectedShareSource = source
+            if source == .current {
+                pendingRecenterOnLocationUpdate = true
+                spotStore.prepareLocationTracking(requestIfNeeded: true)
+            }
+            focusOnShareLocation(animated: true)
+        } label: {
+            let isSelected = activeShareSource == source
+            let isCurrentWaiting = source == .current && spotStore.userCoordinate == nil
+            let fillStyle = isSelected ? AnyShapeStyle(SpotRelayTheme.heroGradient) : AnyShapeStyle(SpotRelayTheme.badgeFill)
+
+            HStack(spacing: 9) {
+                Image(systemName: source.systemImage)
+                    .font(.system(size: 15, weight: .bold))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.title)
+                        .font(.subheadline.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+
+                    if isCurrentWaiting {
+                        Text("Locating")
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .padding(.horizontal, 14)
+            .background(fillStyle, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .foregroundStyle(isSelected ? .white : SpotRelayTheme.textPrimary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var locationPreview: some View {
@@ -241,7 +343,7 @@ struct PostSpotFlowView: View {
         } label: {
             HStack {
                 Image(systemName: shareCoordinate == nil ? "location.fill" : (isUsingParkedLocation ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"))
-                Text(shareCoordinate == nil ? "Waiting for Location" : (isUsingParkedLocation ? "Share Parked Spot" : "Share My Spot"))
+                Text(shareCoordinate == nil ? "Waiting for Location" : (isUsingParkedLocation ? "Share Parked Spot" : "Share Current Location"))
             }
             .font(.headline.weight(.bold))
             .frame(maxWidth: .infinity)
@@ -287,6 +389,14 @@ struct PostSpotFlowView: View {
         } else {
             cameraPosition = position
         }
+    }
+
+    private func syncSelectedShareSource() {
+        if parkingReminderStore.savedParkedLocation != nil {
+            return
+        }
+
+        selectedShareSource = .current
     }
 }
 
