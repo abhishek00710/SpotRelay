@@ -21,6 +21,12 @@
 "Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended." = "Permite Movimiento y Fitness para que SpotRelay detecte cuándo probablemente terminó un viaje en auto.";
 "Always location access is required for parked-car return reminders." = "Se requiere ubicación Siempre para los recordatorios de regreso al auto.";
 "Always location is required for the parked-car reminder to keep working." = "La ubicación Siempre es necesaria para que el recordatorio del auto estacionado siga funcionando.";
+"Apple account connected" = "Cuenta de Apple conectada";
+"Apple account saving needs the Firebase build. Please try again from the live app." = "Guardar la cuenta de Apple requiere la versión con Firebase. Inténtalo de nuevo desde la app en vivo.";
+"Apple did not return a valid identity token. Please try again." = "Apple no devolvió un token de identidad válido. Inténtalo de nuevo.";
+"Apple sign-in isn't enabled in Firebase Authentication yet. Enable Apple under Firebase Console > Authentication > Sign-in method." = "El inicio con Apple aún no está activado en Firebase Authentication. Activa Apple en Firebase Console > Authentication > Sign-in method.";
+"Apple sign-in did not finish. Please try again." = "El inicio de sesión con Apple no terminó. Inténtalo de nuevo.";
+"Apple sign-in needs internet to finish linking your profile." = "El inicio con Apple necesita internet para terminar de vincular tu perfil.";
 "Apple Maps" = "Apple Maps";
 "Approach updates" = "Actualizaciones de llegada";
 "Are you about to leave? Share your spot and help nearby drivers." = "¿Estás por salir? Comparte tu lugar y ayuda a conductores cercanos.";
@@ -53,6 +59,7 @@
 "Couldn't cancel this handoff" = "No se pudo cancelar este traspaso";
 "Couldn't claim this handoff" = "No se pudo reclamar este traspaso";
 "Couldn't finish this handoff" = "No se pudo finalizar este traspaso";
+"Couldn't save Apple sign-in" = "No se pudo guardar el inicio con Apple";
 "Couldn't share your spot" = "No se pudo compartir tu lugar";
 "Couldn't update arrival" = "No se pudo actualizar la llegada";
 "Couldn't update parked spot" = "No se pudo actualizar el lugar estacionado";
@@ -98,6 +105,7 @@
 "Keep the handoff visible while you coordinate." = "Mantén el traspaso visible mientras coordinas.";
 "Keep the leaving driver confident with a clear live arrival state." = "Dale confianza al conductor que sale con un estado claro de llegada en vivo.";
 "Keep your status updated so the other driver trusts the handoff." = "Mantén tu estado actualizado para que el otro conductor confíe en el traspaso.";
+"Keep your name, photo, stars, and trust history after reinstalling or moving to another device." = "Conserva tu nombre, foto, estrellas e historial de confianza después de reinstalar o cambiar de dispositivo.";
 "Let SpotRelay remember your parked car automatically" = "Deja que SpotRelay recuerde tu auto estacionado automáticamente";
 "Leaving driver" = "Conductor que sale";
 "Leaving in 2 min" = "Saliendo en 2 min";
@@ -180,8 +188,10 @@
 "Please try again in a moment." = "Inténtalo de nuevo en un momento.";
 "Please try marking your arrival again." = "Intenta marcar tu llegada otra vez.";
 "Please try posting your handoff again in a moment." = "Intenta publicar tu traspaso de nuevo en un momento.";
+"Please try signing in with Apple again." = "Intenta iniciar sesión con Apple otra vez.";
 "Please wait a moment for your secure user session to finish connecting." = "Espera un momento mientras termina de conectarse tu sesión segura.";
 "Profile stats" = "Estadísticas del perfil";
+"Profile saved with Apple" = "Perfil guardado con Apple";
 "Real-time" = "Tiempo real";
 "Real-time coordination keeps the exchange simple." = "La coordinación en tiempo real mantiene el intercambio simple.";
 "Ready to share" = "Listo para compartir";
@@ -202,6 +212,9 @@
 "Saved details" = "Detalles guardados";
 "Saved Parked Car" = "Auto estacionado guardado";
 "Saved parking spot" = "Lugar estacionado guardado";
+"Save profile with Apple" = "Guardar perfil con Apple";
+"Save or restore with Apple" = "Guardar o restaurar con Apple";
+"Saving Apple sign-in..." = "Guardando inicio con Apple...";
 "Set up smart parking" = "Configurar estacionamiento inteligente";
 "Share Current Location" = "Compartir ubicación actual";
 "Share from" = "Compartir desde";
@@ -255,6 +268,8 @@
 "That spot may already be taken or no longer nearby." = "Ese lugar puede ya estar tomado o ya no estar cerca.";
 "The countdown ran out before the handoff completed." = "La cuenta regresiva terminó antes de completar el traspaso.";
 "The Firebase backend is not configured yet." = "El backend de Firebase aún no está configurado.";
+"Firebase could not verify the Apple credential. Please try again, then check the Apple provider setup in Firebase if it keeps happening." = "Firebase no pudo verificar la credencial de Apple. Inténtalo de nuevo y, si sigue pasando, revisa la configuración del proveedor Apple en Firebase.";
+"Firebase could not verify the Apple sign-in nonce. Please try again." = "Firebase no pudo verificar el nonce del inicio con Apple. Inténtalo de nuevo.";
 "The handoff is complete." = "El traspaso está completo.";
 "The handoff will publish from your current live location." = "El traspaso se publicará desde tu ubicación actual en vivo.";
 "The leaving driver can see you" = "El conductor que sale puede verte";
@@ -303,6 +318,7 @@
 "You already have a live leaving handoff." = "Ya tienes un traspaso activo de salida.";
 "You already have an active claimed handoff." = "Ya tienes un traspaso reclamado activo.";
 "You can't claim your own parking handoff." = "No puedes reclamar tu propio traspaso de estacionamiento.";
+"You can reinstall SpotRelay or sign in on another device and keep this profile." = "Puedes reinstalar SpotRelay o iniciar sesión en otro dispositivo y conservar este perfil.";
 "You parked here" = "Estacionaste aquí";
 "You’ll see the claimant here the moment another driver commits." = "Verás al reclamante aquí en cuanto otro conductor se comprometa.";
 "You're arriving" = "Estás llegando";

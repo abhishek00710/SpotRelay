@@ -21,6 +21,12 @@
 "Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended." = "Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended.";
 "Always location access is required for parked-car return reminders." = "Always location access is required for parked-car return reminders.";
 "Always location is required for the parked-car reminder to keep working." = "Always location is required for the parked-car reminder to keep working.";
+"Apple account connected" = "Apple account connected";
+"Apple account saving needs the Firebase build. Please try again from the live app." = "Apple account saving needs the Firebase build. Please try again from the live app.";
+"Apple did not return a valid identity token. Please try again." = "Apple did not return a valid identity token. Please try again.";
+"Apple sign-in isn't enabled in Firebase Authentication yet. Enable Apple under Firebase Console > Authentication > Sign-in method." = "Apple sign-in isn't enabled in Firebase Authentication yet. Enable Apple under Firebase Console > Authentication > Sign-in method.";
+"Apple sign-in did not finish. Please try again." = "Apple sign-in did not finish. Please try again.";
+"Apple sign-in needs internet to finish linking your profile." = "Apple sign-in needs internet to finish linking your profile.";
 "Apple Maps" = "Apple Maps";
 "Approach updates" = "Approach updates";
 "Are you about to leave? Share your spot and help nearby drivers." = "Are you about to leave? Share your spot and help nearby drivers.";
@@ -53,6 +59,7 @@
 "Couldn't cancel this handoff" = "Couldn't cancel this handoff";
 "Couldn't claim this handoff" = "Couldn't claim this handoff";
 "Couldn't finish this handoff" = "Couldn't finish this handoff";
+"Couldn't save Apple sign-in" = "Couldn't save Apple sign-in";
 "Couldn't share your spot" = "Couldn't share your spot";
 "Couldn't update arrival" = "Couldn't update arrival";
 "Couldn't update parked spot" = "Couldn't update parked spot";
@@ -98,6 +105,7 @@
 "Keep the handoff visible while you coordinate." = "Keep the handoff visible while you coordinate.";
 "Keep the leaving driver confident with a clear live arrival state." = "Keep the leaving driver confident with a clear live arrival state.";
 "Keep your status updated so the other driver trusts the handoff." = "Keep your status updated so the other driver trusts the handoff.";
+"Keep your name, photo, stars, and trust history after reinstalling or moving to another device." = "Keep your name, photo, stars, and trust history after reinstalling or moving to another device.";
 "Let SpotRelay remember your parked car automatically" = "Let SpotRelay remember your parked car automatically";
 "Leaving driver" = "Leaving driver";
 "Leaving in 2 min" = "Leaving in 2 min";
@@ -180,8 +188,10 @@
 "Please try again in a moment." = "Please try again in a moment.";
 "Please try marking your arrival again." = "Please try marking your arrival again.";
 "Please try posting your handoff again in a moment." = "Please try posting your handoff again in a moment.";
+"Please try signing in with Apple again." = "Please try signing in with Apple again.";
 "Please wait a moment for your secure user session to finish connecting." = "Please wait a moment for your secure user session to finish connecting.";
 "Profile stats" = "Profile stats";
+"Profile saved with Apple" = "Profile saved with Apple";
 "Real-time" = "Real-time";
 "Real-time coordination keeps the exchange simple." = "Real-time coordination keeps the exchange simple.";
 "Ready to share" = "Ready to share";
@@ -202,6 +212,9 @@
 "Saved details" = "Saved details";
 "Saved Parked Car" = "Saved Parked Car";
 "Saved parking spot" = "Saved parking spot";
+"Save profile with Apple" = "Save profile with Apple";
+"Save or restore with Apple" = "Save or restore with Apple";
+"Saving Apple sign-in..." = "Saving Apple sign-in...";
 "Set up smart parking" = "Set up smart parking";
 "Share Current Location" = "Share Current Location";
 "Share from" = "Share from";
@@ -255,6 +268,8 @@
 "That spot may already be taken or no longer nearby." = "That spot may already be taken or no longer nearby.";
 "The countdown ran out before the handoff completed." = "The countdown ran out before the handoff completed.";
 "The Firebase backend is not configured yet." = "The Firebase backend is not configured yet.";
+"Firebase could not verify the Apple credential. Please try again, then check the Apple provider setup in Firebase if it keeps happening." = "Firebase could not verify the Apple credential. Please try again, then check the Apple provider setup in Firebase if it keeps happening.";
+"Firebase could not verify the Apple sign-in nonce. Please try again." = "Firebase could not verify the Apple sign-in nonce. Please try again.";
 "The handoff is complete." = "The handoff is complete.";
 "The handoff will publish from your current live location." = "The handoff will publish from your current live location.";
 "The leaving driver can see you" = "The leaving driver can see you";
@@ -303,6 +318,7 @@
 "You already have a live leaving handoff." = "You already have a live leaving handoff.";
 "You already have an active claimed handoff." = "You already have an active claimed handoff.";
 "You can't claim your own parking handoff." = "You can't claim your own parking handoff.";
+"You can reinstall SpotRelay or sign in on another device and keep this profile." = "You can reinstall SpotRelay or sign in on another device and keep this profile.";
 "You parked here" = "You parked here";
 "You’ll see the claimant here the moment another driver commits." = "You’ll see the claimant here the moment another driver commits.";
 "You're arriving" = "You're arriving";

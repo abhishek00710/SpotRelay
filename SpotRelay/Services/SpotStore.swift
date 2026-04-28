@@ -3,10 +3,24 @@ import CoreLocation
 import Foundation
 import MapKit
 import Network
+#if canImport(FirebaseAuth)
+import FirebaseAuth
+#endif
 
 struct ReviewPromptRequest: Equatable {
     let id = UUID()
     let successfulHandoffCount: Int
+}
+
+struct AppleAccountLinkResult: Equatable {
+    let isLinked: Bool
+    let message: String?
+
+    static let success = AppleAccountLinkResult(isLinked: true, message: nil)
+
+    static func failure(_ message: String) -> AppleAccountLinkResult {
+        AppleAccountLinkResult(isLinked: false, message: message)
+    }
 }
 
 @MainActor
@@ -115,6 +129,10 @@ final class SpotStore: NSObject, ObservableObject {
         @unknown default:
             return false
         }
+    }
+
+    var isAppleAccountLinked: Bool {
+        userIdentity.isAppleAccountLinked
     }
 
     func displayName(for userID: String?) -> String? {
@@ -310,6 +328,34 @@ final class SpotStore: NSObject, ObservableObject {
         currentUser = userIdentity.updateProfile(displayName: displayName, avatarJPEGData: avatarJPEGData)
     }
 
+    @discardableResult
+    func linkAppleAccount(idToken: String, rawNonce: String, fullName: PersonNameComponents?) async -> AppleAccountLinkResult {
+        guard ensureReadyForMutation() else {
+            return .failure(errorBanner?.message ?? L10n.tr("Please try signing in with Apple again."))
+        }
+
+        do {
+            currentUser = try await userIdentity.linkAppleAccount(
+                idToken: idToken,
+                rawNonce: rawNonce,
+                fullName: fullName
+            )
+            clearErrorBanner()
+            return .success
+        } catch {
+            let message = accountLinkingMessage(
+                for: error,
+                fallback: L10n.tr("Please try signing in with Apple again.")
+            )
+            #if DEBUG
+            let nsError = error as NSError
+            print("SpotRelay Apple account link failed: domain=\(nsError.domain) code=\(nsError.code) message=\(message) userInfo=\(nsError.userInfo)")
+            #endif
+            presentBanner(title: L10n.tr("Couldn't save Apple sign-in"), message: message)
+            return .failure(message)
+        }
+    }
+
     func clearErrorBanner() {
         bannerDismissTask?.cancel()
         errorBanner = nil
@@ -415,6 +461,27 @@ final class SpotStore: NSObject, ObservableObject {
             title: title,
             message: userFacingMessage(for: error, fallback: fallbackMessage)
         )
+    }
+
+    private func accountLinkingMessage(for error: Error, fallback: String) -> String {
+        let nsError = error as NSError
+
+        #if canImport(FirebaseAuth)
+        switch nsError.code {
+        case AuthErrorCode.operationNotAllowed.rawValue:
+            return L10n.tr("Apple sign-in isn't enabled in Firebase Authentication yet. Enable Apple under Firebase Console > Authentication > Sign-in method.")
+        case AuthErrorCode.missingOrInvalidNonce.rawValue:
+            return L10n.tr("Firebase could not verify the Apple sign-in nonce. Please try again.")
+        case AuthErrorCode.invalidCredential.rawValue:
+            return L10n.tr("Firebase could not verify the Apple credential. Please try again, then check the Apple provider setup in Firebase if it keeps happening.")
+        case AuthErrorCode.networkError.rawValue:
+            return L10n.tr("Apple sign-in needs internet to finish linking your profile.")
+        default:
+            break
+        }
+        #endif
+
+        return userFacingMessage(for: error, fallback: fallback)
     }
 
     private func ensureReadyForMutation() -> Bool {

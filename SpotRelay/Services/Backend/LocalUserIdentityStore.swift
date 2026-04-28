@@ -16,12 +16,25 @@ private func sanitizedProfileDisplayName(_ rawValue: String) -> String {
 @MainActor
 protocol UserIdentityProviding: AnyObject {
     var currentUser: AppUser { get }
+    var isAppleAccountLinked: Bool { get }
     var currentUserPublisher: AnyPublisher<AppUser, Never> { get }
     var userProfilesPublisher: AnyPublisher<[String: AppUser], Never> { get }
     func profile(for userID: String) -> AppUser?
     func observeProfile(for userID: String?)
     func recordCompletedHandoff(success: Bool, as role: HandoffRole?) -> AppUser
     func updateProfile(displayName: String, avatarJPEGData: Data?) -> AppUser
+    func linkAppleAccount(idToken: String, rawNonce: String, fullName: PersonNameComponents?) async throws -> AppUser
+}
+
+enum UserIdentityError: LocalizedError {
+    case firebaseRequired
+
+    var errorDescription: String? {
+        switch self {
+        case .firebaseRequired:
+            return L10n.tr("Apple account saving needs the Firebase build. Please try again from the live app.")
+        }
+    }
 }
 
 @MainActor
@@ -72,6 +85,10 @@ final class LocalUserIdentityStore: UserIdentityProviding {
         profilesSubject.eraseToAnyPublisher()
     }
 
+    var isAppleAccountLinked: Bool {
+        false
+    }
+
     func profile(for userID: String) -> AppUser? {
         userID == currentUser.id ? currentUser : nil
     }
@@ -108,6 +125,10 @@ final class LocalUserIdentityStore: UserIdentityProviding {
         return currentUser
     }
 
+    func linkAppleAccount(idToken: String, rawNonce: String, fullName: PersonNameComponents?) async throws -> AppUser {
+        throw UserIdentityError.firebaseRequired
+    }
+
     private func persistLocally(_ user: AppUser) {
         defaults.set(user.displayName, forKey: Keys.displayName)
         defaults.set(user.joinedAt, forKey: Keys.joinedAt)
@@ -133,6 +154,8 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
     private var profileListener: ListenerRegistration?
     private var profileListeners: [String: ListenerRegistration] = [:]
     private var knownProfiles: [String: AppUser] = [:]
+    private var shouldSkipNextAuthProfilePersistence = false
+    private var shouldSeedRemoteProfileFromLocalCache: Bool
     private(set) var currentUser: AppUser
 
     private enum Keys {
@@ -148,6 +171,9 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let hasCachedProfile = Self.hasCachedProfile(in: defaults)
+        self.shouldSeedRemoteProfileFromLocalCache = hasCachedProfile
+
         let displayName = sanitizedProfileDisplayName(defaults.string(forKey: Keys.displayName) ?? "You")
         defaults.set(displayName, forKey: Keys.displayName)
         let joinedAt = defaults.object(forKey: Keys.joinedAt) as? Date ?? .now
@@ -171,13 +197,14 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         authStateListener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             guard let self, let user else { return }
             Task { @MainActor in
-                self.applyAuthenticatedUserID(user.uid)
+                let shouldPersistProfile = self.shouldSeedRemoteProfileFromLocalCache && !self.shouldSkipNextAuthProfilePersistence
+                self.shouldSeedRemoteProfileFromLocalCache = true
+                self.shouldSkipNextAuthProfilePersistence = false
+                self.applyAuthenticatedUserID(user.uid, shouldPersistProfile: shouldPersistProfile)
             }
         }
 
-        if let currentUser = Auth.auth().currentUser {
-            applyAuthenticatedUserID(currentUser.uid)
-        } else {
+        if Auth.auth().currentUser == nil {
             Auth.auth().signInAnonymously { _, _ in }
         }
     }
@@ -196,6 +223,12 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
 
     var userProfilesPublisher: AnyPublisher<[String: AppUser], Never> {
         profilesSubject.eraseToAnyPublisher()
+    }
+
+    var isAppleAccountLinked: Bool {
+        Auth.auth().currentUser?.providerData.contains { provider in
+            provider.providerID == AuthProviderID.apple.rawValue
+        } == true
     }
 
     func profile(for userID: String) -> AppUser? {
@@ -249,7 +282,41 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         return currentUser
     }
 
-    private func applyAuthenticatedUserID(_ userID: String) {
+    func linkAppleAccount(idToken: String, rawNonce: String, fullName: PersonNameComponents?) async throws -> AppUser {
+        let credential = OAuthProvider.appleCredential(
+            withIDToken: idToken,
+            rawNonce: rawNonce,
+            fullName: fullName
+        )
+
+        if isAppleAccountLinked {
+            return currentUser
+        }
+
+        guard let firebaseUser = Auth.auth().currentUser else {
+            return try await signInWithExistingAppleCredential(credential)
+        }
+
+        do {
+            _ = try await link(firebaseUser, with: credential)
+            applyAppleProfileNameIfNeeded(fullName)
+            applyAuthenticatedUserID(firebaseUser.uid, shouldPersistProfile: true)
+            return currentUser
+        } catch {
+            let authErrorCode = (error as NSError).code
+            if authErrorCode == AuthErrorCode.providerAlreadyLinked.rawValue {
+                return currentUser
+            }
+
+            if authErrorCode == AuthErrorCode.credentialAlreadyInUse.rawValue {
+                return try await signInWithExistingAppleCredential(credential)
+            }
+
+            throw error
+        }
+    }
+
+    private func applyAuthenticatedUserID(_ userID: String, shouldPersistProfile: Bool = true) {
         if currentUser.id != userID {
             currentUser = AppUser(
                 id: userID,
@@ -265,7 +332,9 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         }
 
         startProfileListener(for: userID)
-        persistCurrentUserProfile()
+        if shouldPersistProfile {
+            persistCurrentUserProfile()
+        }
     }
 
     private func startProfileListener(for userID: String) {
@@ -287,6 +356,35 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         persistLocally(updatedUser)
         subject.send(updatedUser)
         updateKnownProfile(updatedUser)
+    }
+
+    private func signInWithExistingAppleCredential(_ credential: OAuthCredential) async throws -> AppUser {
+        shouldSkipNextAuthProfilePersistence = true
+        let result = try await signIn(with: credential)
+        applyAuthenticatedUserID(result.user.uid, shouldPersistProfile: false)
+
+        if let remoteProfileData = try await fetchProfileData(userID: result.user.uid) {
+            applyCurrentUserRemoteProfileData(remoteProfileData)
+        } else {
+            persistCurrentUserProfile()
+        }
+
+        return currentUser
+    }
+
+    private func applyAppleProfileNameIfNeeded(_ fullName: PersonNameComponents?) {
+        guard currentUser.displayName == "You", let fullName else {
+            return
+        }
+
+        let formattedName = PersonNameComponentsFormatter
+            .localizedString(from: fullName, style: .medium, options: [])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !formattedName.isEmpty else { return }
+
+        currentUser.displayName = sanitizedProfileDisplayName(formattedName)
+        subject.send(currentUser)
+        updateKnownProfile(currentUser)
     }
 
     private func applyRemoteProfileData(_ data: [String: Any], userID: String) {
@@ -335,13 +433,65 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
 
         if let avatarJPEGData = currentUser.avatarJPEGData {
             payload["avatarBase64"] = avatarJPEGData.base64EncodedString()
+        } else {
+            payload["avatarBase64"] = FieldValue.delete()
         }
 
-        userDocument(userID: currentUser.id).setData(payload)
+        userDocument(userID: currentUser.id).setData(payload, merge: true)
+    }
+
+    private func link(_ user: FirebaseAuth.User, with credential: AuthCredential) async throws -> AuthDataResult {
+        try await withCheckedThrowingContinuation { continuation in
+            user.link(with: credential) { authResult, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let authResult else {
+                    continuation.resume(throwing: UserIdentityError.firebaseRequired)
+                    return
+                }
+
+                continuation.resume(returning: authResult)
+            }
+        }
+    }
+
+    private func signIn(with credential: AuthCredential) async throws -> AuthDataResult {
+        try await withCheckedThrowingContinuation { continuation in
+            Auth.auth().signIn(with: credential) { authResult, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let authResult else {
+                    continuation.resume(throwing: UserIdentityError.firebaseRequired)
+                    return
+                }
+
+                continuation.resume(returning: authResult)
+            }
+        }
+    }
+
+    private func fetchProfileData(userID: String) async throws -> [String: Any]? {
+        let snapshot = try await userDocument(userID: userID).getDocument()
+        return snapshot.data()
     }
 
     private func userDocument(userID: String) -> DocumentReference {
         database.collection("users").document(userID)
+    }
+
+    private static func hasCachedProfile(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: Keys.displayName) != nil ||
+            defaults.object(forKey: Keys.joinedAt) != nil ||
+            defaults.object(forKey: Keys.successfulHandoffs) != nil ||
+            defaults.object(forKey: Keys.successfulShares) != nil ||
+            defaults.object(forKey: Keys.noShowCount) != nil ||
+            defaults.object(forKey: Keys.avatarJPEGData) != nil
     }
 
     private func persistLocally(_ user: AppUser) {

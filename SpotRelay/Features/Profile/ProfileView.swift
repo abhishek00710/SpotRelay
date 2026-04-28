@@ -1,3 +1,5 @@
+import AuthenticationServices
+import CryptoKit
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -16,6 +18,9 @@ struct ProfileView: View {
     @State private var baselineDisplayName = "You"
     @State private var baselineAvatarSignature = 0
     @State private var draftAvatarSignature = 0
+    @State private var currentAppleSignInNonce: String?
+    @State private var isLinkingAppleAccount = false
+    @State private var appleSignInErrorMessage: String?
     @FocusState private var isNameEditorFieldFocused: Bool
 
     private var user: AppUser {
@@ -77,6 +82,7 @@ struct ProfileView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
+                    accountRecoveryCard
                     ProfileInsightsSection(user: user)
                 }
                 .padding(20)
@@ -101,6 +107,7 @@ struct ProfileView: View {
                 nameEditorSheet
             }
         }
+        .spotRelayErrorBanner(using: spotStore)
     }
 
     private var heroCard: some View {
@@ -253,6 +260,77 @@ struct ProfileView: View {
             shadow: SpotRelayTheme.shadow,
             shadowRadius: 24,
             shadowY: 12
+        )
+    }
+
+    private var accountRecoveryCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(SpotRelayTheme.heroGradient)
+
+                    Image(systemName: spotStore.isAppleAccountLinked ? "checkmark.shield.fill" : "apple.logo")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(spotStore.isAppleAccountLinked ? L10n.tr("Profile saved with Apple") : L10n.tr("Save or restore with Apple"))
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text(spotStore.isAppleAccountLinked
+                         ? L10n.tr("You can reinstall SpotRelay or sign in on another device and keep this profile.")
+                         : L10n.tr("Keep your name, photo, stars, and trust history after reinstalling or moving to another device."))
+                        .font(.subheadline)
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if spotStore.isAppleAccountLinked {
+                Label(L10n.tr("Apple account connected"), systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.success)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+            } else {
+                SignInWithAppleButton(.continue) { request in
+                    prepareAppleSignInRequest(request)
+                } onCompletion: { result in
+                    handleAppleSignInCompletion(result)
+                }
+                .signInWithAppleButtonStyle(.white)
+                .frame(height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .disabled(isLinkingAppleAccount)
+                .opacity(isLinkingAppleAccount ? 0.7 : 1)
+
+                if isLinkingAppleAccount {
+                    Label(L10n.tr("Saving Apple sign-in..."), systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                }
+            }
+
+            if let appleSignInErrorMessage {
+                Text(appleSignInErrorMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(SpotRelayTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
         )
     }
 
@@ -578,6 +656,62 @@ struct ProfileView: View {
         draftDisplayName = sanitizedName.isEmpty ? "You" : sanitizedName
         isNameEditorFieldFocused = false
         isShowingNameEditor = false
+    }
+
+    private func prepareAppleSignInRequest(_ request: ASAuthorizationAppleIDRequest) {
+        let nonce = randomNonceString()
+        currentAppleSignInNonce = nonce
+        appleSignInErrorMessage = nil
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = sha256(nonce)
+    }
+
+    private func handleAppleSignInCompletion(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let nonce = currentAppleSignInNonce else {
+                appleSignInErrorMessage = L10n.tr("Apple sign-in did not finish. Please try again.")
+                return
+            }
+
+            guard let identityToken = appleIDCredential.identityToken,
+                  let idTokenString = String(data: identityToken, encoding: .utf8) else {
+                appleSignInErrorMessage = L10n.tr("Apple did not return a valid identity token. Please try again.")
+                return
+            }
+
+            isLinkingAppleAccount = true
+            Task { @MainActor in
+                let result = await spotStore.linkAppleAccount(
+                    idToken: idTokenString,
+                    rawNonce: nonce,
+                    fullName: appleIDCredential.fullName
+                )
+                currentAppleSignInNonce = nil
+                isLinkingAppleAccount = false
+                appleSignInErrorMessage = result.isLinked
+                    ? nil
+                    : result.message ?? L10n.tr("Please try signing in with Apple again.")
+            }
+
+        case .failure(let error):
+            currentAppleSignInNonce = nil
+            guard (error as? ASAuthorizationError)?.code != .canceled else { return }
+            appleSignInErrorMessage = L10n.tr("Apple sign-in did not finish. Please try again.")
+        }
+    }
+
+    private func randomNonceString(length: Int = 32) -> String {
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var generator = SystemRandomNumberGenerator()
+        return String((0..<length).compactMap { _ in charset.randomElement(using: &generator) })
+    }
+
+    private func sha256(_ input: String) -> String {
+        let inputData = Data(input.utf8)
+        let hashedData = SHA256.hash(data: inputData)
+        return hashedData.map { String(format: "%02x", $0) }.joined()
     }
 }
 
