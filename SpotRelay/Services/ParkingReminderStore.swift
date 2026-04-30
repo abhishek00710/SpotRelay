@@ -56,6 +56,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         case notificationScheduled
         case pausedNeedsAlwaysLocation
         case monitoringUnavailable
+        case notificationsDisabled
 
         var title: String {
             switch self {
@@ -71,6 +72,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Reminder paused")
             case .monitoringUnavailable:
                 return L10n.tr("Region monitoring unavailable")
+            case .notificationsDisabled:
+                return L10n.tr("Notifications off")
             }
         }
 
@@ -88,6 +91,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Always location is required for the parked-car reminder to keep working.")
             case .monitoringUnavailable:
                 return L10n.tr("This device can't monitor the parked-car region.")
+            case .notificationsDisabled:
+                return L10n.tr("Turn notifications on so SpotRelay can show the parked-car return nudge.")
             }
         }
 
@@ -96,9 +101,10 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
     }
 
-    nonisolated static let defaultRadiusMeters: Double = 10
-    nonisolated private static let fallbackExitDistanceMeters: Double = 25
-    nonisolated private static let fallbackReturnDistanceMeters: Double = 15
+    nonisolated static let defaultRadiusMeters: Double = 75
+    nonisolated private static let fallbackExitDistanceMeters: Double = 90
+    nonisolated private static let fallbackReturnDistanceMeters: Double = 45
+    nonisolated private static let fallbackReturnWithoutExitMinimumAge: TimeInterval = 20 * 60
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
 
@@ -213,9 +219,16 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             return
         }
 
-        let returnDistance = max(reminder.radiusMeters + Self.radiusToleranceMeters, Self.fallbackReturnDistanceMeters)
-        if hasExitedRegion, distance <= returnDistance {
+        if hasExitedRegion, distance <= Self.fallbackReturnDistanceMeters {
             await handleRegionEntry()
+            return
+        }
+
+        let reminderAge = Date().timeIntervalSince(reminder.createdAt)
+        if !hasExitedRegion,
+           reminderAge >= Self.fallbackReturnWithoutExitMinimumAge,
+           distance <= Self.fallbackReturnDistanceMeters {
+            await handleRegionEntry(allowWithoutRecordedExit: true)
         }
     }
 
@@ -282,9 +295,17 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         updateDebugState(.exitedWaitingForReturn)
     }
 
-    private func handleRegionEntry() async {
+    private func handleRegionEntry(allowWithoutRecordedExit: Bool = false) async {
         guard let reminder = activeReminder else { return }
-        guard hasExitedRegion else { return }
+        guard hasExitedRegion || allowWithoutRecordedExit else { return }
+
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized ||
+              settings.authorizationStatus == .provisional ||
+              settings.authorizationStatus == .ephemeral else {
+            updateDebugState(.notificationsDisabled)
+            return
+        }
 
         let content = UNMutableNotificationContent()
         content.title = L10n.tr("Back at your car?")
@@ -306,10 +327,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
 
         center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
         center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
-        try? await center.add(request)
-        updateDebugState(.notificationScheduled)
-
-        clearActiveReminderOnly()
+        do {
+            try await center.add(request)
+            updateDebugState(.notificationScheduled)
+            clearActiveReminderOnly(preservingNotification: true)
+        } catch {
+            #if DEBUG
+            print("SpotRelay parked reminder notification failed:", error.localizedDescription)
+            #endif
+        }
     }
 
     private var hasExitedRegion: Bool {
@@ -320,10 +346,12 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         defaults.set(value, forKey: Keys.hasExitedRegion)
     }
 
-    private func clearActiveReminderOnly() {
+    private func clearActiveReminderOnly(preservingNotification: Bool = false) {
         stopMonitoringReminderRegion()
-        center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
-        center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
+        if !preservingNotification {
+            center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
+            center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
+        }
         defaults.removeObject(forKey: Keys.activeReminder)
         defaults.removeObject(forKey: Keys.hasExitedRegion)
         activeReminder = nil

@@ -1091,6 +1091,8 @@ struct HomeView: View {
             return "location.slash.circle.fill"
         case .monitoringUnavailable:
             return "exclamationmark.triangle.fill"
+        case .notificationsDisabled:
+            return "bell.slash.fill"
         }
     }
 
@@ -1104,7 +1106,7 @@ struct HomeView: View {
             return SpotRelayTheme.primary
         case .notificationScheduled:
             return SpotRelayTheme.warning
-        case .pausedNeedsAlwaysLocation, .monitoringUnavailable:
+        case .pausedNeedsAlwaysLocation, .monitoringUnavailable, .notificationsDisabled:
             return SpotRelayTheme.warning
         }
     }
