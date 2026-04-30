@@ -98,6 +98,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         case motionSettledFix
         case locationDwellFix
         case visitSettledFix
+        case currentBlueDotFix
 
         var summaryLabel: String {
             switch self {
@@ -113,6 +114,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 return L10n.tr("location dwell fix")
             case .visitSettledFix:
                 return L10n.tr("visit settled fix")
+            case .currentBlueDotFix:
+                return L10n.tr("current blue dot fix")
             }
         }
     }
@@ -173,6 +176,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let duplicateArmSuppressionWindow: TimeInterval = 12 * 60 * 60
     nonisolated private static let duplicateArmDistanceMeters: CLLocationDistance = 120
     nonisolated private static let staleVehicleSignalWindow: TimeInterval = 24 * 60 * 60
+    nonisolated private static let currentLocationCorrectionMaximumAge: TimeInterval = 90
+    nonisolated private static let currentLocationCorrectionMaximumEventOffset: TimeInterval = 5 * 60
+    nonisolated private static let currentLocationCorrectionMaximumAccuracyMeters: CLLocationAccuracy = 30
+    nonisolated private static let currentLocationCorrectionDistanceMeters: CLLocationDistance = 45
 
     init(
         parkingReminderStore: ParkingReminderStore,
@@ -398,11 +405,12 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func processParkingCaptureEvent(_ event: ParkingCaptureEvent) async {
         guard parkingReminderStore.activeReminder == nil else { return }
-        let coordinate = event.location.coordinate
+        let locationDecision = trustedParkedLocation(for: event)
+        let coordinate = locationDecision.location.coordinate
         guard !isLikelyDuplicateArm(at: coordinate, comparedTo: lastAutoArmRecord) else { return }
 
         let areaLabel = await reverseGeocodedAreaLabel(for: coordinate)
-        let source = parkingLocationSource(for: event.source)
+        let source = locationDecision.source
         let enrichedEvidence = L10n.format(
             "%@ + %@",
             localizedEvidenceSummary(event.evidenceSummary),
@@ -433,7 +441,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 areaLabel: areaLabel,
                 confidenceScore: event.confidenceScore,
                 evidenceSummary: enrichedEvidence,
-                locationAccuracyMeters: event.location.horizontalAccuracy,
+                locationAccuracyMeters: locationDecision.location.horizontalAccuracy,
                 locationSource: source
             )
             persist(record)
@@ -444,6 +452,52 @@ final class SmartParkingStore: NSObject, ObservableObject {
             print("SpotRelay parking capture save failed:", error.localizedDescription)
             #endif
         }
+    }
+
+    private func trustedParkedLocation(
+        for event: ParkingCaptureEvent
+    ) -> (location: CLLocation, source: ParkingLocationSource) {
+        let eventSource = parkingLocationSource(for: event.source)
+
+        guard !event.evidence.contains("walking after parking") else {
+            return (event.location, eventSource)
+        }
+
+        guard let latestLocation = locationManager.location else {
+            return (event.location, eventSource)
+        }
+
+        guard latestLocation.horizontalAccuracy >= 0,
+              latestLocation.horizontalAccuracy <= Self.currentLocationCorrectionMaximumAccuracyMeters else {
+            return (event.location, eventSource)
+        }
+
+        guard abs(latestLocation.timestamp.timeIntervalSinceNow) <= Self.currentLocationCorrectionMaximumAge else {
+            return (event.location, eventSource)
+        }
+
+        guard abs(latestLocation.timestamp.timeIntervalSince(event.parkedAt)) <= Self.currentLocationCorrectionMaximumEventOffset else {
+            return (event.location, eventSource)
+        }
+
+        if latestLocation.speed >= 0, latestLocation.speed > 2.5 {
+            return (event.location, eventSource)
+        }
+
+        let distance = latestLocation.distance(from: event.location)
+        let correctionThreshold = max(
+            Self.currentLocationCorrectionDistanceMeters,
+            latestLocation.horizontalAccuracy + event.location.horizontalAccuracy + 20
+        )
+
+        guard distance >= correctionThreshold else {
+            return (event.location, eventSource)
+        }
+
+        #if DEBUG
+        print("SpotRelay parking capture corrected to blue dot by \(Int(distance.rounded()))m")
+        #endif
+        return (latestLocation, .currentBlueDotFix)
     }
 
     private func parkingLocationSource(for source: ParkingCaptureEvent.Source) -> ParkingLocationSource {

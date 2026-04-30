@@ -338,6 +338,7 @@
 "automotive motion" = "movimiento en auto";
 "car disconnect fix" = "punto al desconectar el auto";
 "car disconnected" = "auto desconectado";
+"current blue dot fix" = "punto azul actual";
 "drive GPS fix" = "punto GPS del trayecto";
 "driving speed" = "velocidad de conducción";
 "high-confidence automotive motion" = "movimiento automotriz de alta confianza";

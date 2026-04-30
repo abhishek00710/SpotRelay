@@ -145,7 +145,12 @@ struct ParkingCaptureEngine {
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
         session = activeSession
-        return finalize(source: .vehicleDisconnect, parkedAt: date, reason: "Vehicle disconnected")
+        return finalize(
+            source: .vehicleDisconnect,
+            parkedAt: date,
+            selectionEnd: date,
+            reason: "Vehicle disconnected"
+        )
     }
 
     mutating func ingest(activity: CMMotionActivity, at receivedAt: Date = .now) -> ParkingCaptureEvent? {
@@ -304,7 +309,12 @@ struct ParkingCaptureEngine {
             return nil
         }
 
-        return finalize(source: source, parkedAt: settledAt, reason: source.label)
+        return finalize(
+            source: source,
+            parkedAt: settledAt,
+            selectionEnd: receivedAt,
+            reason: source.label
+        )
     }
 
     private mutating func settleFromLocationDwellIfReady(at date: Date) -> ParkingCaptureEvent? {
@@ -314,16 +324,27 @@ struct ParkingCaptureEngine {
             lastReason = "Parking candidate: waiting for dwell"
             return nil
         }
-        return finalize(source: .locationDwell, parkedAt: stoppedSince, reason: "Location dwell complete")
+        return finalize(
+            source: .locationDwell,
+            parkedAt: stoppedSince,
+            selectionEnd: date,
+            reason: "Location dwell complete"
+        )
     }
 
     private mutating func finalize(
         source: ParkingCaptureEvent.Source,
         parkedAt: Date,
+        selectionEnd: Date,
         reason: String
     ) -> ParkingCaptureEvent? {
         guard let activeSession = session else { return nil }
-        guard let location = bestParkingLocation(from: activeSession, parkedAt: parkedAt) else {
+        guard let location = bestParkingLocation(
+            from: activeSession,
+            parkedAt: parkedAt,
+            selectionEnd: selectionEnd,
+            source: source
+        ) else {
             lastReason = "Skipped save: no accurate final GPS fix"
             return nil
         }
@@ -351,9 +372,17 @@ struct ParkingCaptureEngine {
         return event
     }
 
-    private func bestParkingLocation(from session: Session, parkedAt: Date) -> CLLocation? {
+    private func bestParkingLocation(
+        from session: Session,
+        parkedAt: Date,
+        selectionEnd: Date,
+        source: ParkingCaptureEvent.Source
+    ) -> CLLocation? {
         let earliest = parkedAt.addingTimeInterval(-Self.parkingWindowBeforeEvent)
-        let latest = parkedAt.addingTimeInterval(Self.parkingWindowAfterEvent)
+        let latest = max(
+            parkedAt.addingTimeInterval(Self.parkingWindowAfterEvent),
+            min(selectionEnd, parkedAt.addingTimeInterval(Self.stoppedDwellDuration + Self.parkingWindowAfterEvent))
+        )
 
         let candidates = session.samples
             .map(\.location)
@@ -368,7 +397,8 @@ struct ParkingCaptureEngine {
             }
 
         return candidates.min { lhs, rhs in
-            score(location: lhs, parkedAt: parkedAt) < score(location: rhs, parkedAt: parkedAt)
+            score(location: lhs, parkedAt: parkedAt, selectionEnd: latest, source: source) <
+                score(location: rhs, parkedAt: parkedAt, selectionEnd: latest, source: source)
         }
     }
 
@@ -411,11 +441,25 @@ struct ParkingCaptureEngine {
         return min(score, 100)
     }
 
-    private func score(location: CLLocation, parkedAt: Date) -> Double {
-        let timeDistance = abs(location.timestamp.timeIntervalSince(parkedAt))
+    private func score(
+        location: CLLocation,
+        parkedAt: Date,
+        selectionEnd: Date,
+        source: ParkingCaptureEvent.Source
+    ) -> Double {
+        let timeDistance: TimeInterval
+        let afterParkingPenalty: Double
+        if source == .locationDwell, location.timestamp >= parkedAt {
+            // GPS often stabilizes after the car stops. For dwell saves, prefer the
+            // best late stationary fix instead of the first noisy stop sample.
+            timeDistance = max(0, selectionEnd.timeIntervalSince(location.timestamp)) * 0.18
+            afterParkingPenalty = 0
+        } else {
+            timeDistance = abs(location.timestamp.timeIntervalSince(parkedAt)) * 0.55
+            afterParkingPenalty = location.timestamp > parkedAt ? 8 : 0
+        }
         let speedPenalty = max(location.speed, 0) * 8
-        let afterParkingPenalty = location.timestamp > parkedAt ? 8 : 0
-        return (location.horizontalAccuracy * 2.7) + (timeDistance * 0.55) + speedPenalty + Double(afterParkingPenalty)
+        return (location.horizontalAccuracy * 2.7) + timeDistance + speedPenalty + afterParkingPenalty
     }
 
     private func shouldStartDrive(from location: CLLocation) -> Bool {
