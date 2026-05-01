@@ -10,6 +10,67 @@ import CoreLocation
 @testable import SpotRelay
 
 final class SpotRelayTests: XCTestCase {
+    func testLocationDwellDoesNotSaveWhileVehicleConnectionIsStillActive() {
+        var engine = ParkingCaptureEngine()
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        engine.vehicleConnected(summary: "car Bluetooth", at: start)
+
+        let drivingSamples = [
+            makeLocation(
+                latitude: 37.0000,
+                longitude: -122.0000,
+                speed: 11,
+                accuracy: 12,
+                timestamp: start
+            ),
+            makeLocation(
+                latitude: 37.0009,
+                longitude: -122.0000,
+                speed: 10,
+                accuracy: 10,
+                timestamp: start.addingTimeInterval(35)
+            ),
+            makeLocation(
+                latitude: 37.0018,
+                longitude: -122.0000,
+                speed: 9,
+                accuracy: 9,
+                timestamp: start.addingTimeInterval(70)
+            )
+        ]
+
+        XCTAssertNil(engine.ingest(locations: drivingSamples))
+
+        let gateStopSamples = [
+            makeLocation(
+                latitude: 37.0022,
+                longitude: -122.0000,
+                speed: 0.4,
+                accuracy: 8,
+                timestamp: start.addingTimeInterval(90)
+            ),
+            makeLocation(
+                latitude: 37.0022,
+                longitude: -122.0000,
+                speed: 0.2,
+                accuracy: 7,
+                timestamp: start.addingTimeInterval(190)
+            )
+        ]
+
+        XCTAssertNil(engine.ingest(locations: gateStopSamples))
+        XCTAssertEqual(engine.snapshot.phase, .parkedCandidate)
+
+        let disconnectEvent = engine.vehicleDisconnected(
+            summary: "car Bluetooth",
+            at: start.addingTimeInterval(220)
+        )
+
+        XCTAssertNotNil(disconnectEvent)
+        XCTAssertEqual(disconnectEvent?.source, .vehicleDisconnect)
+    }
+
     @MainActor
     func testClaimantCancellationReopensSpotWhileTimerRuns() async throws {
         let repository = LocalSpotRepository()
@@ -74,5 +135,23 @@ final class SpotRelayTests: XCTestCase {
         XCTAssertEqual(failedLeavingResult.successfulHandoffs, 2)
         XCTAssertEqual(failedLeavingResult.successfulShares, 1)
         XCTAssertEqual(failedLeavingResult.noShowCount, 1)
+    }
+
+    private func makeLocation(
+        latitude: Double,
+        longitude: Double,
+        speed: CLLocationSpeed,
+        accuracy: CLLocationAccuracy,
+        timestamp: Date
+    ) -> CLLocation {
+        CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: 0,
+            horizontalAccuracy: accuracy,
+            verticalAccuracy: 5,
+            course: 0,
+            speed: speed,
+            timestamp: timestamp
+        )
     }
 }

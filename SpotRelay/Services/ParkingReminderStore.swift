@@ -193,6 +193,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         let region = monitoredRegion(for: reminder)
         locationManager.startMonitoring(for: region)
         locationManager.requestState(for: region)
+        updateSignificantLocationMonitoringIfNeeded()
     }
 
     func clearReminder() async {
@@ -235,6 +236,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private func restoreMonitoringIfNeeded() async {
         guard let reminder = activeReminder else {
             stopMonitoringReminderRegion()
+            locationManager.stopMonitoringSignificantLocationChanges()
             if debugState != .notificationScheduled {
                 updateDebugState(.noReminder)
             }
@@ -266,6 +268,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             locationManager.requestState(for: monitoredRegion)
         }
 
+        updateSignificantLocationMonitoringIfNeeded()
+
         if hasExitedRegion {
             updateDebugState(.exitedWaitingForReturn)
         } else {
@@ -287,6 +291,16 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private func stopMonitoringReminderRegion() {
         let monitoredReminderRegions = locationManager.monitoredRegions.filter { $0.identifier == Keys.regionIdentifier }
         monitoredReminderRegions.forEach(locationManager.stopMonitoring)
+    }
+
+    private func updateSignificantLocationMonitoringIfNeeded() {
+        guard activeReminder != nil,
+              locationManager.authorizationStatus == .authorizedAlways else {
+            locationManager.stopMonitoringSignificantLocationChanges()
+            return
+        }
+
+        locationManager.startMonitoringSignificantLocationChanges()
     }
 
     private func handleRegionExit() {
@@ -348,6 +362,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
 
     private func clearActiveReminderOnly(preservingNotification: Bool = false) {
         stopMonitoringReminderRegion()
+        locationManager.stopMonitoringSignificantLocationChanges()
         if !preservingNotification {
             center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
             center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
@@ -442,11 +457,20 @@ extension ParkingReminderStore: CLLocationManagerDelegate {
             switch state {
             case .outside:
                 self?.handleRegionExit()
-            case .inside, .unknown:
+            case .inside:
+                await self?.handleRegionEntry(allowWithoutRecordedExit: false)
+            case .unknown:
                 break
             @unknown default:
                 break
             }
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let coordinate = locations.last?.coordinate else { return }
+        Task { @MainActor [weak self] in
+            await self?.verifyReturnProximityFallback(at: coordinate)
         }
     }
 

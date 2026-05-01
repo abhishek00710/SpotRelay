@@ -64,6 +64,7 @@ struct ParkingCaptureEngine {
         var samples: [Sample]
         var evidence: Set<String>
         var vehicleSignalSeen: Bool
+        var vehicleConnectionActive: Bool
         var sawDrivingMotion: Bool
         var distanceMeters: CLLocationDistance
         var lastMovingAt: Date
@@ -130,6 +131,7 @@ struct ParkingCaptureEngine {
         updatedAt = date
         ensureSession(startedAt: date, evidence: "vehicle signal")
         session?.vehicleSignalSeen = true
+        session?.vehicleConnectionActive = true
         session?.evidence.insert(summary)
         lastReason = "Vehicle signal connected"
     }
@@ -142,6 +144,7 @@ struct ParkingCaptureEngine {
         }
 
         activeSession.vehicleSignalSeen = true
+        activeSession.vehicleConnectionActive = false
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
         session = activeSession
@@ -236,6 +239,7 @@ struct ParkingCaptureEngine {
                 samples: initialSamples,
                 evidence: [evidence],
                 vehicleSignalSeen: false,
+                vehicleConnectionActive: false,
                 sawDrivingMotion: evidence == "automotive motion" || evidence == "driving speed",
                 distanceMeters: 0,
                 lastMovingAt: startedAt,
@@ -309,6 +313,11 @@ struct ParkingCaptureEngine {
             return nil
         }
 
+        if activeSession.vehicleConnectionActive, source == .visitSettled {
+            lastReason = "Deferring visit settle while vehicle connection is still active"
+            return nil
+        }
+
         return finalize(
             source: source,
             parkedAt: settledAt,
@@ -322,6 +331,10 @@ struct ParkingCaptureEngine {
         guard let stoppedSince = activeSession.stoppedSince else { return nil }
         guard date.timeIntervalSince(stoppedSince) >= Self.stoppedDwellDuration else {
             lastReason = "Parking candidate: waiting for dwell"
+            return nil
+        }
+        if activeSession.vehicleConnectionActive {
+            lastReason = "Parking candidate: vehicle signal still active"
             return nil
         }
         return finalize(
