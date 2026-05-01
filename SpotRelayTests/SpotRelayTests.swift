@@ -10,6 +10,69 @@ import CoreLocation
 @testable import SpotRelay
 
 final class SpotRelayTests: XCTestCase {
+    func testVehicleDisconnectPrefersStoppedLocationOverLaterWalkAwayFix() {
+        var engine = ParkingCaptureEngine()
+        let start = Date(timeIntervalSince1970: 2_000)
+
+        engine.vehicleConnected(summary: "car Bluetooth", at: start)
+
+        let samples = [
+            makeLocation(
+                latitude: 37.0000,
+                longitude: -122.0000,
+                speed: 12,
+                accuracy: 10,
+                timestamp: start
+            ),
+            makeLocation(
+                latitude: 37.0012,
+                longitude: -122.0000,
+                speed: 10,
+                accuracy: 9,
+                timestamp: start.addingTimeInterval(45)
+            ),
+            makeLocation(
+                latitude: 37.0024,
+                longitude: -122.0000,
+                speed: 8,
+                accuracy: 8,
+                timestamp: start.addingTimeInterval(90)
+            ),
+            makeLocation(
+                latitude: 37.0028,
+                longitude: -122.0000,
+                speed: 0.3,
+                accuracy: 7,
+                timestamp: start.addingTimeInterval(120)
+            ),
+            makeLocation(
+                latitude: 37.0028,
+                longitude: -122.0000,
+                speed: 0.1,
+                accuracy: 6,
+                timestamp: start.addingTimeInterval(132)
+            ),
+            makeLocation(
+                latitude: 37.0034,
+                longitude: -122.0000,
+                speed: 1.2,
+                accuracy: 6,
+                timestamp: start.addingTimeInterval(155)
+            )
+        ]
+
+        XCTAssertNil(engine.ingest(locations: samples))
+
+        let event = engine.vehicleDisconnected(
+            summary: "car Bluetooth",
+            at: start.addingTimeInterval(160)
+        )
+
+        XCTAssertNotNil(event)
+        XCTAssertEqual(event?.source, .vehicleDisconnect)
+        XCTAssertEqual(event?.location.coordinate.latitude, 37.0028, accuracy: 0.00005)
+    }
+
     func testLocationDwellDoesNotSaveWhileVehicleConnectionIsStillActive() {
         var engine = ParkingCaptureEngine()
         let start = Date(timeIntervalSince1970: 1_000)

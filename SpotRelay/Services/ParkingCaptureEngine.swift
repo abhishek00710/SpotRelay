@@ -96,6 +96,7 @@ struct ParkingCaptureEngine {
     private static let sessionSampleRetention: TimeInterval = 30 * 60
     private static let parkingWindowBeforeEvent: TimeInterval = 3 * 60
     private static let parkingWindowAfterEvent: TimeInterval = 25
+    private static let disconnectPostStopCandidateWindow: TimeInterval = 12
     private static let stoppedDwellDuration: TimeInterval = 90
     private static let minimumDriveDuration: TimeInterval = 2 * 60
     private static let minimumDriveDistanceMeters: CLLocationDistance = 250
@@ -148,9 +149,10 @@ struct ParkingCaptureEngine {
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
         session = activeSession
+        let parkedAt = activeSession.stoppedSince ?? date
         return finalize(
             source: .vehicleDisconnect,
-            parkedAt: date,
+            parkedAt: parkedAt,
             selectionEnd: date,
             reason: "Vehicle disconnected"
         )
@@ -403,6 +405,15 @@ struct ParkingCaptureEngine {
                 guard location.horizontalAccuracy >= 0 else { return false }
                 guard location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else { return false }
                 guard location.timestamp >= earliest, location.timestamp <= latest else { return false }
+                if source == .vehicleDisconnect, location.timestamp > parkedAt {
+                    let secondsAfterStop = location.timestamp.timeIntervalSince(parkedAt)
+                    guard secondsAfterStop <= Self.disconnectPostStopCandidateWindow else {
+                        return false
+                    }
+                    if location.speed >= 0, location.speed > Self.stoppedSpeedMetersPerSecond {
+                        return false
+                    }
+                }
                 if location.speed >= 0, location.speed > Self.maximumWalkingSpeedMetersPerSecond {
                     return location.timestamp <= parkedAt
                 }
@@ -467,6 +478,10 @@ struct ParkingCaptureEngine {
             // best late stationary fix instead of the first noisy stop sample.
             timeDistance = max(0, selectionEnd.timeIntervalSince(location.timestamp)) * 0.18
             afterParkingPenalty = 0
+        } else if source == .vehicleDisconnect, location.timestamp > parkedAt {
+            let secondsAfterStop = location.timestamp.timeIntervalSince(parkedAt)
+            timeDistance = secondsAfterStop * 0.75
+            afterParkingPenalty = 22 + min(secondsAfterStop, 15) * 1.6
         } else {
             timeDistance = abs(location.timestamp.timeIntervalSince(parkedAt)) * 0.55
             afterParkingPenalty = location.timestamp > parkedAt ? 8 : 0
