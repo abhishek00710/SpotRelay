@@ -5,6 +5,7 @@ import UserNotifications
 import UIKit
 
 struct HomeView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var spotStore: SpotStore
     @EnvironmentObject private var pushNotificationStore: PushNotificationStore
     @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
@@ -16,6 +17,9 @@ struct HomeView: View {
     @State private var isNearbySheetExpanded = false
     @State private var isShowingParkedLocationSheet = false
     @State private var isShowingProfileSheet = false
+    @State private var isEditingParkedPinOnMap = false
+    @State private var editingParkedCoordinate: CLLocationCoordinate2D?
+    @State private var lastObservedMapRegion: MKCoordinateRegion?
     @State private var parkingReminderAlert: HomeViewAlert?
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
@@ -50,6 +54,11 @@ struct HomeView: View {
             focusMap(animated: true)
             pendingRecenterOnLocationUpdate = false
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            pendingRecenterOnLocationUpdate = true
+            spotStore.prepareLocationTracking(requestIfNeeded: false)
+        }
         .alert(item: $parkingReminderAlert) { alert in
             Alert(
                 title: Text(alert.title),
@@ -75,30 +84,47 @@ struct HomeView: View {
     }
 
     private var mapLayer: some View {
-        SizedMap(position: $cameraPosition) {
-            UserAnnotation()
+        ZStack {
+            if isEditingParkedPinOnMap, let editingCoordinate = editingParkedCoordinate {
+                EditableParkedMapView(
+                    initialRegion: editingMapInitialRegion(for: editingCoordinate),
+                    parkedCoordinate: Binding(
+                        get: { editingParkedCoordinate ?? editingCoordinate },
+                        set: { newValue in editingParkedCoordinate = newValue }
+                    ),
+                    userCoordinate: spotStore.userCoordinate,
+                    nearbySpots: spotStore.nearbyActiveSpots,
+                    currentUserID: spotStore.currentUser.id
+                )
+            } else {
+                SizedMap(position: $cameraPosition, onMapCameraChange: { context in
+                    lastObservedMapRegion = context.region
+                }) {
+                    UserAnnotation()
 
-            if let parkedLocation = parkingReminderStore.savedParkedLocation {
-                Annotation("You parked here", coordinate: parkedLocation.coordinate) {
-                    Button {
-                        isShowingParkedLocationSheet = true
-                    } label: {
-                        ParkedCarPinView()
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            ForEach(spotStore.nearbyActiveSpots) { spot in
-                Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
-                    Button {
-                        if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
-                            onSelectSpot(spot)
-                        } else {
-                            spotStore.activeHandoffID = spot.id
+                    if let parkedLocation = parkingReminderStore.savedParkedLocation {
+                        Annotation("You parked here", coordinate: parkedLocation.coordinate) {
+                            Button {
+                                beginParkedPinEditing(using: parkedLocation)
+                            } label: {
+                                ParkedCarPinView()
+                            }
+                            .buttonStyle(.plain)
                         }
-                    } label: {
-                        SpotPinView(signal: spot)
+                    }
+
+                    ForEach(spotStore.nearbyActiveSpots) { spot in
+                        Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
+                            Button {
+                                if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
+                                    onSelectSpot(spot)
+                                } else {
+                                    spotStore.activeHandoffID = spot.id
+                                }
+                            } label: {
+                                SpotPinView(signal: spot)
+                            }
+                        }
                     }
                 }
             }
@@ -187,12 +213,26 @@ struct HomeView: View {
 
     private var parkedLocationShortcutButton: some View {
         Button {
-            focusOnSavedParkedLocation()
+            if isEditingParkedPinOnMap {
+                Task {
+                    await saveEditedParkedPinFromMap()
+                }
+            } else {
+                focusOnSavedParkedLocation()
+            }
         } label: {
-            Text("P")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(SpotRelayTheme.textPrimary)
-                .frame(width: 46, height: 46)
+            Group {
+                if isEditingParkedPinOnMap {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(SpotRelayTheme.success)
+                } else {
+                    Text("P")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+                }
+            }
+            .frame(width: 46, height: 46)
         }
         .buttonStyle(.plain)
         .glassPanel(
@@ -773,6 +813,10 @@ struct HomeView: View {
     }
 
     private func recenterOnUser() {
+        if isEditingParkedPinOnMap {
+            cancelParkedPinEditing()
+            return
+        }
         pendingRecenterOnLocationUpdate = true
         spotStore.prepareLocationTracking(requestIfNeeded: true)
         focusMap(animated: true)
@@ -780,6 +824,11 @@ struct HomeView: View {
 
     private func focusOnSavedParkedLocation() {
         guard let reminder = parkingReminderStore.savedParkedLocation else { return }
+
+        if isEditingParkedPinOnMap {
+            editingParkedCoordinate = reminder.coordinate
+            return
+        }
 
         collapseNearbySheetIfNeeded()
         setCameraPosition(
@@ -792,6 +841,65 @@ struct HomeView: View {
             animated: true
         )
         //showParkedLocationToast(for: reminder)
+    }
+
+    private func beginParkedPinEditing(using reminder: ParkingReminderStore.Reminder) {
+        editingParkedCoordinate = reminder.coordinate
+        collapseNearbySheetIfNeeded()
+        isEditingParkedPinOnMap = true
+    }
+
+    private func cancelParkedPinEditing() {
+        isEditingParkedPinOnMap = false
+        editingParkedCoordinate = nil
+    }
+
+    private func editingMapInitialRegion(for coordinate: CLLocationCoordinate2D) -> MKCoordinateRegion {
+        if let lastObservedMapRegion {
+            return lastObservedMapRegion
+        }
+        return MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
+        )
+    }
+
+    private func saveEditedParkedPinFromMap() async {
+        guard let coordinate = editingParkedCoordinate,
+              let reminder = parkingReminderStore.savedParkedLocation else {
+            return
+        }
+
+        let areaLabel = await reverseGeocodedAreaLabel(for: coordinate)
+
+        do {
+            try await parkingReminderStore.rememberParkedSpot(
+                at: coordinate,
+                areaLabel: areaLabel,
+                radiusMeters: reminder.radiusMeters
+            )
+            cancelParkedPinEditing()
+        } catch {
+            parkingReminderAlert = HomeViewAlert(
+                title: L10n.tr("Couldn't move parked spot"),
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func reverseGeocodedAreaLabel(for coordinate: CLLocationCoordinate2D) async -> String? {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        do {
+            guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+            let items = try await request.mapItems
+            let mapItem = items.first
+            return mapItem?.addressRepresentations?.cityName
+                ?? mapItem?.addressRepresentations?.cityWithContext
+                ?? mapItem?.address?.shortAddress
+                ?? mapItem?.name?.components(separatedBy: ",").first
+        } catch {
+            return nil
+        }
     }
 
     private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
@@ -1112,6 +1220,167 @@ struct HomeView: View {
     }
 }
 
+private struct EditableParkedMapView: UIViewRepresentable {
+    let initialRegion: MKCoordinateRegion
+    @Binding var parkedCoordinate: CLLocationCoordinate2D
+    let userCoordinate: CLLocationCoordinate2D?
+    let nearbySpots: [ParkingSpotSignal]
+    let currentUserID: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parkedCoordinate: $parkedCoordinate, currentUserID: currentUserID)
+    }
+
+    func makeUIView(context: Context) -> MKMapView {
+        let mapView = MKMapView(frame: .zero)
+        mapView.delegate = context.coordinator
+        mapView.pointOfInterestFilter = .excludingAll
+        mapView.showsCompass = false
+        mapView.showsScale = false
+        mapView.showsUserLocation = true
+        mapView.isRotateEnabled = false
+        mapView.isPitchEnabled = false
+        mapView.setRegion(initialRegion, animated: false)
+        context.coordinator.applyAnnotations(
+            on: mapView,
+            parkedCoordinate: parkedCoordinate,
+            nearbySpots: nearbySpots
+        )
+        return mapView
+    }
+
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        context.coordinator.currentUserID = currentUserID
+        context.coordinator.applyAnnotations(
+            on: mapView,
+            parkedCoordinate: parkedCoordinate,
+            nearbySpots: nearbySpots
+        )
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        @Binding var parkedCoordinate: CLLocationCoordinate2D
+        var currentUserID: String
+        private let parkedAnnotation = MKPointAnnotation()
+
+        init(parkedCoordinate: Binding<CLLocationCoordinate2D>, currentUserID: String) {
+            _parkedCoordinate = parkedCoordinate
+            self.currentUserID = currentUserID
+            super.init()
+            parkedAnnotation.coordinate = parkedCoordinate.wrappedValue
+            parkedAnnotation.title = "You parked here"
+        }
+
+        func applyAnnotations(
+            on mapView: MKMapView,
+            parkedCoordinate: CLLocationCoordinate2D,
+            nearbySpots: [ParkingSpotSignal]
+        ) {
+            if !mapView.annotations.contains(where: { $0 === parkedAnnotation }) {
+                mapView.addAnnotation(parkedAnnotation)
+            }
+
+            if abs(parkedAnnotation.coordinate.latitude - parkedCoordinate.latitude) > 0.000001 ||
+                abs(parkedAnnotation.coordinate.longitude - parkedCoordinate.longitude) > 0.000001 {
+                parkedAnnotation.coordinate = parkedCoordinate
+            }
+
+            let existingSpotAnnotations = mapView.annotations.compactMap { $0 as? SpotMapAnnotation }
+            let existingIDs = Set(existingSpotAnnotations.map(\.spot.id))
+            let desiredIDs = Set(nearbySpots.map(\.id))
+
+            for annotation in existingSpotAnnotations where !desiredIDs.contains(annotation.spot.id) {
+                mapView.removeAnnotation(annotation)
+            }
+
+            for spot in nearbySpots where !existingIDs.contains(spot.id) {
+                mapView.addAnnotation(SpotMapAnnotation(spot: spot))
+            }
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if annotation === parkedAnnotation {
+                let identifier = "EditableParkedPin"
+                let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+                    ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                view.annotation = annotation
+                view.canShowCallout = false
+                view.isDraggable = true
+                view.markerTintColor = UIColor(SpotRelayTheme.success)
+                view.glyphImage = UIImage(systemName: "car.fill")
+                view.displayPriority = .required
+                return view
+            }
+
+            guard let spotAnnotation = annotation as? SpotMapAnnotation else { return nil }
+            let identifier = "NearbySpotPin"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
+                ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            view.annotation = annotation
+            view.canShowCallout = false
+            view.isDraggable = false
+            view.displayPriority = .defaultHigh
+            view.markerTintColor = spotAnnotation.tintColor
+            view.glyphImage = UIImage(systemName: spotAnnotation.glyphName)
+            return view
+        }
+
+        func mapView(_ mapView: MKMapView, annotationView view: MKAnnotationView, didChange newState: MKAnnotationView.DragState, fromOldState oldState: MKAnnotationView.DragState) {
+            guard view.annotation === parkedAnnotation else { return }
+            switch newState {
+            case .starting:
+                view.dragState = .dragging
+            case .ending, .canceling:
+                if let updatedCoordinate = view.annotation?.coordinate {
+                    parkedCoordinate = updatedCoordinate
+                }
+                view.dragState = .none
+            default:
+                break
+            }
+        }
+    }
+}
+
+private final class SpotMapAnnotation: NSObject, MKAnnotation {
+    let spot: ParkingSpotSignal
+
+    var coordinate: CLLocationCoordinate2D {
+        spot.coordinate
+    }
+
+    init(spot: ParkingSpotSignal) {
+        self.spot = spot
+    }
+
+    var glyphName: String {
+        if spot.status == .claimed {
+            return "timer"
+        }
+        if spot.status == .arriving {
+            return "car.side.fill"
+        }
+        return spot.createdBy == spot.claimedBy ? "mappin.circle.fill" : "parkingsign.circle.fill"
+    }
+
+    var tintColor: UIColor {
+        switch spot.status {
+        case .posted:
+            return UIColor(SpotRelayTheme.primary)
+        case .claimed:
+            return UIColor(SpotRelayTheme.warning)
+        case .arriving:
+            return UIColor(SpotRelayTheme.success)
+        case .completed:
+            return UIColor(SpotRelayTheme.success)
+        case .expired:
+            return UIColor(SpotRelayTheme.textSecondary)
+        case .cancelled:
+            return UIColor(SpotRelayTheme.textSecondary)
+        }
+    }
+}
+
 private struct ExpandedSheetContentHeightPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -1354,7 +1623,7 @@ private struct ParkedLocationDetailView: View {
                 .font(.headline.weight(.bold))
                 .foregroundStyle(SpotRelayTheme.textPrimary)
 
-            Text("Refresh the parked spot to your current location if you moved the car, or clear it if this is no longer useful.")
+            Text("Refresh the parked spot to your current location, or clear it if this is no longer useful. To fine-tune the saved pin, drag it directly on the home map.")
                 .font(.subheadline)
                 .foregroundStyle(SpotRelayTheme.textSecondary)
 

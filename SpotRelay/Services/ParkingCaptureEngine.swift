@@ -1,6 +1,6 @@
 import CoreLocation
 import CoreMotion
-import Foundation
+import Foundation 
 
 struct ParkingCaptureEvent {
     enum Source: String, Codable, Equatable {

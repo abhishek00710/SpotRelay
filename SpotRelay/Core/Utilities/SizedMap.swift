@@ -4,14 +4,17 @@ import SwiftUI
 struct SizedMap<Content: MapContent>: View {
     @Binding var position: MapCameraPosition
     let content: () -> Content
+    let onMapCameraChange: ((MapCameraUpdateContext) -> Void)?
     @State private var shouldRenderMap = false
     @State private var renderTask: Task<Void, Never>?
 
     init(
         position: Binding<MapCameraPosition>,
+        onMapCameraChange: ((MapCameraUpdateContext) -> Void)? = nil,
         @MapContentBuilder content: @escaping () -> Content
     ) {
         _position = position
+        self.onMapCameraChange = onMapCameraChange
         self.content = content
     }
 
@@ -22,6 +25,9 @@ struct SizedMap<Content: MapContent>: View {
             Group {
                 if hasUsableSize && shouldRenderMap {
                     Map(position: $position, content: content)
+                        .onMapCameraChange { context in
+                            onMapCameraChange?(context)
+                        }
                 } else {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .fill(SpotRelayTheme.surface)
