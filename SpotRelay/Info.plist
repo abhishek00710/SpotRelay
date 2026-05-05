@@ -26,6 +26,8 @@
 	<string>SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>SpotRelay uses Bluetooth only as an optional signal to improve parked-car confidence when your vehicle exposes a nearby Bluetooth device.</string>
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
 		<key>ParkedCarAccuracy</key>

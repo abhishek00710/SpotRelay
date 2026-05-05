@@ -107,9 +107,13 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let fallbackReturnWithoutExitMinimumAge: TimeInterval = 20 * 60
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
+    nonisolated private static let parkedLocationHistoryLimit = 10
+    nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 25
+    nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
 
     @Published private(set) var activeReminder: Reminder?
     @Published private(set) var savedParkedLocation: Reminder?
+    @Published private(set) var parkedLocationHistory: [Reminder]
     @Published private(set) var debugState: DebugState
 
     private let center: UNUserNotificationCenter
@@ -119,6 +123,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private enum Keys {
         static let activeReminder = "parkingReminder.active"
         static let savedParkedLocation = "parkingReminder.savedLocation"
+        static let parkedLocationHistory = "parkingReminder.history"
         static let hasExitedRegion = "parkingReminder.hasExitedRegion"
         static let debugState = "parkingReminder.debugState"
         nonisolated static let regionIdentifier = "parkingReminder.returnToCar.region"
@@ -135,6 +140,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         self.locationManager = locationManager
         self.activeReminder = Self.loadReminder(from: defaults, key: Keys.activeReminder)
         self.savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
+        self.parkedLocationHistory = Self.loadReminderHistory(from: defaults)
         self.debugState = Self.loadDebugState(from: defaults)
             ?? Self.derivedDebugState(
                 activeReminder: Self.loadReminder(from: defaults, key: Keys.activeReminder),
@@ -160,6 +166,14 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         savedParkedLocation != nil
     }
 
+    var latestRememberedParkedLocation: Reminder? {
+        savedParkedLocation ?? parkedLocationHistory.first
+    }
+
+    var hasRememberedParkedLocations: Bool {
+        latestRememberedParkedLocation != nil
+    }
+
     func rememberParkedSpot(
         at coordinate: CLLocationCoordinate2D,
         areaLabel: String?,
@@ -183,6 +197,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         stopMonitoringReminderRegion()
         persist(reminder, key: Keys.activeReminder)
         persist(reminder, key: Keys.savedParkedLocation)
+        persistUpdatedHistory(adding: reminder)
         setHasExitedRegion(false)
         activeReminder = reminder
         savedParkedLocation = reminder
@@ -203,9 +218,54 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         updateDebugState(.noReminder)
     }
 
+    func retireCurrentParkedSpotForDriving() async {
+        guard activeReminder != nil || savedParkedLocation != nil else { return }
+        clearActiveReminderOnly()
+        defaults.removeObject(forKey: Keys.savedParkedLocation)
+        savedParkedLocation = nil
+        updateDebugState(.noReminder)
+    }
+
+    func seedTemporaryTestingParkedSpot(
+        at coordinate: CLLocationCoordinate2D,
+        areaLabel: String?,
+        radiusMeters: Double = defaultRadiusMeters
+    ) {
+        let reminder = Reminder(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            createdAt: .now,
+            areaLabel: normalizedAreaLabel(areaLabel),
+            radiusMeters: radiusMeters
+        )
+
+        persist(reminder, key: Keys.savedParkedLocation)
+        persistUpdatedHistory(adding: reminder)
+        savedParkedLocation = reminder
+
+        if CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self),
+           locationManager.authorizationStatus == .authorizedAlways {
+            stopMonitoringReminderRegion()
+            persist(reminder, key: Keys.activeReminder)
+            setHasExitedRegion(false)
+            activeReminder = reminder
+            let region = monitoredRegion(for: reminder)
+            locationManager.startMonitoring(for: region)
+            locationManager.requestState(for: region)
+            updateSignificantLocationMonitoringIfNeeded()
+            updateDebugState(.armed)
+        } else {
+            activeReminder = nil
+            defaults.removeObject(forKey: Keys.activeReminder)
+            defaults.removeObject(forKey: Keys.hasExitedRegion)
+            updateDebugState(.noReminder)
+        }
+    }
+
     func refreshReminderState() async {
         activeReminder = Self.loadReminder(from: defaults, key: Keys.activeReminder)
         savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
+        parkedLocationHistory = Self.loadReminderHistory(from: defaults)
         normalizeReminderRadiiIfNeeded()
         removeExpiredSavedLocationIfNeeded()
         await restoreMonitoringIfNeeded()
@@ -377,6 +437,28 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         defaults.set(data, forKey: key)
     }
 
+    private func persist(_ reminders: [Reminder], key: String) {
+        guard let data = try? JSONEncoder().encode(reminders) else { return }
+        defaults.set(data, forKey: key)
+    }
+
+    private func persistUpdatedHistory(adding reminder: Reminder) {
+        var history = parkedLocationHistory
+        history.removeAll { existing in
+            existing.representsSameParkingSession(
+                as: reminder,
+                distanceThreshold: Self.parkedLocationHistoryDuplicateDistanceMeters,
+                timeThreshold: Self.parkedLocationHistoryDuplicateTimeWindow
+            )
+        }
+        history.insert(reminder, at: 0)
+        if history.count > Self.parkedLocationHistoryLimit {
+            history = Array(history.prefix(Self.parkedLocationHistoryLimit))
+        }
+        parkedLocationHistory = history
+        persist(history, key: Keys.parkedLocationHistory)
+    }
+
     private func updateDebugState(_ state: DebugState) {
         debugState = state
         defaults.set(state.rawValue, forKey: Keys.debugState)
@@ -390,6 +472,14 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private static func loadDebugState(from defaults: UserDefaults) -> DebugState? {
         guard let rawValue = defaults.string(forKey: Keys.debugState) else { return nil }
         return DebugState(rawValue: rawValue)
+    }
+
+    private static func loadReminderHistory(from defaults: UserDefaults) -> [Reminder] {
+        guard let data = defaults.data(forKey: Keys.parkedLocationHistory),
+              let reminders = try? JSONDecoder().decode([Reminder].self, from: data) else {
+            return []
+        }
+        return reminders
     }
 
     private static func derivedDebugState(activeReminder: Reminder?, hasExitedRegion: Bool) -> DebugState {
@@ -412,6 +502,12 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 self.savedParkedLocation = normalized
                 persist(normalized, key: Keys.savedParkedLocation)
             }
+        }
+
+        let normalizedHistory = parkedLocationHistory.map { $0.normalizedRadius() }
+        if normalizedHistory != parkedLocationHistory {
+            parkedLocationHistory = normalizedHistory
+            persist(normalizedHistory, key: Keys.parkedLocationHistory)
         }
     }
 
@@ -491,6 +587,17 @@ private extension ParkingReminderStore.Reminder {
             areaLabel: areaLabel,
             radiusMeters: ParkingReminderStore.defaultRadiusMeters
         )
+    }
+
+    func representsSameParkingSession(
+        as other: Self,
+        distanceThreshold: CLLocationDistance,
+        timeThreshold: TimeInterval
+    ) -> Bool {
+        let origin = CLLocation(latitude: latitude, longitude: longitude)
+        let destination = CLLocation(latitude: other.latitude, longitude: other.longitude)
+        return origin.distance(from: destination) <= distanceThreshold &&
+            abs(createdAt.timeIntervalSince(other.createdAt)) <= timeThreshold
     }
 }
 

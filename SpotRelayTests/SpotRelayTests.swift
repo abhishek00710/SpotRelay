@@ -134,6 +134,45 @@ final class SpotRelayTests: XCTestCase {
         XCTAssertEqual(disconnectEvent?.source, .vehicleDisconnect)
     }
 
+    func testVehicleDisconnectWaitsUntilAllVehicleSignalsEnd() {
+        var engine = ParkingCaptureEngine()
+        let start = Date(timeIntervalSince1970: 3_000)
+
+        engine.vehicleConnected(summary: "vehicle-signal:carplay", at: start)
+        engine.vehicleConnected(summary: "vehicle-signal:corebluetooth", at: start.addingTimeInterval(5))
+
+        let samples = [
+            makeLocation(
+                latitude: 37.0000,
+                longitude: -122.0000,
+                speed: 11,
+                accuracy: 8,
+                timestamp: start
+            ),
+            makeLocation(
+                latitude: 37.0010,
+                longitude: -122.0000,
+                speed: 8,
+                accuracy: 8,
+                timestamp: start.addingTimeInterval(45)
+            ),
+            makeLocation(
+                latitude: 37.0014,
+                longitude: -122.0000,
+                speed: 0.3,
+                accuracy: 7,
+                timestamp: start.addingTimeInterval(80)
+            )
+        ]
+
+        XCTAssertNil(engine.ingest(locations: samples))
+        XCTAssertNil(engine.vehicleDisconnected(summary: "vehicle-signal:corebluetooth", at: start.addingTimeInterval(95)))
+
+        let finalEvent = engine.vehicleDisconnected(summary: "vehicle-signal:carplay", at: start.addingTimeInterval(110))
+        XCTAssertNotNil(finalEvent)
+        XCTAssertEqual(finalEvent?.source, .vehicleDisconnect)
+    }
+
     @MainActor
     func testClaimantCancellationReopensSpotWhileTimerRuns() async throws {
         let repository = LocalSpotRepository()
@@ -198,6 +237,36 @@ final class SpotRelayTests: XCTestCase {
         XCTAssertEqual(failedLeavingResult.successfulHandoffs, 2)
         XCTAssertEqual(failedLeavingResult.successfulShares, 1)
         XCTAssertEqual(failedLeavingResult.noShowCount, 1)
+    }
+
+    @MainActor
+    func testParkingReminderHistoryKeepsTenRecordsWhileDroppingCurrentSavedSpot() async {
+        let suiteName = #function
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let store = ParkingReminderStore(defaults: defaults)
+
+        for index in 0..<12 {
+            let coordinate = CLLocationCoordinate2D(
+                latitude: 37.33 + (Double(index) * 0.0004),
+                longitude: -122.01
+            )
+            store.seedTemporaryTestingParkedSpot(
+                at: coordinate,
+                areaLabel: "Test \(index)"
+            )
+        }
+
+        XCTAssertEqual(store.parkedLocationHistory.count, 10)
+        XCTAssertNotNil(store.savedParkedLocation)
+
+        let latestCoordinate = store.savedParkedLocation?.coordinate
+        await store.retireCurrentParkedSpotForDriving()
+
+        XCTAssertNil(store.savedParkedLocation)
+        XCTAssertEqual(store.parkedLocationHistory.count, 10)
+        XCTAssertEqual(store.parkedLocationHistory.first?.coordinate.latitude, latestCoordinate?.latitude, accuracy: 0.000001)
     }
 
     private func makeLocation(

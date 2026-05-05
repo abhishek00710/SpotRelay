@@ -1,5 +1,6 @@
 import AVFAudio
 import Combine
+import CoreBluetooth
 import CoreLocation
 import CoreMotion
 import Foundation
@@ -121,15 +122,47 @@ final class SmartParkingStore: NSObject, ObservableObject {
     }
 
     enum VehicleSignalSource: String, Codable, Equatable {
+        case carPlay
         case carAudio
         case bluetoothAudio
+        case coreBluetoothVehicle
 
         var summaryLabel: String {
             switch self {
+            case .carPlay:
+                return L10n.tr("CarPlay session")
             case .carAudio:
                 return L10n.tr("CarPlay or car audio")
             case .bluetoothAudio:
                 return L10n.tr("car Bluetooth")
+            case .coreBluetoothVehicle:
+                return L10n.tr("known car Bluetooth peripheral")
+            }
+        }
+
+        var captureToken: String {
+            switch self {
+            case .carPlay:
+                return "vehicle-signal:carplay"
+            case .carAudio:
+                return "vehicle-signal:car-audio"
+            case .bluetoothAudio:
+                return "vehicle-signal:bluetooth-audio"
+            case .coreBluetoothVehicle:
+                return "vehicle-signal:corebluetooth"
+            }
+        }
+
+        var priority: Int {
+            switch self {
+            case .carPlay:
+                return 4
+            case .coreBluetoothVehicle:
+                return 3
+            case .carAudio:
+                return 2
+            case .bluetoothAudio:
+                return 1
             }
         }
     }
@@ -155,22 +188,30 @@ final class SmartParkingStore: NSObject, ObservableObject {
     @Published private(set) var recentVehicleSignal: VehicleSignalRecord?
     @Published private(set) var lastInferenceAssessment: ConfidenceAssessment?
     @Published private(set) var parkingCaptureSnapshot = ParkingCaptureEngine().snapshot
+    @Published private(set) var isCarPlaySignalActive = false
 
     private let defaults: UserDefaults
     private let locationManager = CLLocationManager()
     private let motionActivityManager = CMMotionActivityManager()
     private let motionQueue = OperationQueue()
     private let parkingReminderStore: ParkingReminderStore
+    private var bluetoothManager: CBCentralManager?
     private var parkingCaptureEngine = ParkingCaptureEngine()
     private var activeReminderCancellable: AnyCancellable?
     private var notificationCancellables = Set<AnyCancellable>()
     private var isMonitoringMotionActivity = false
+    private var recentAutomotiveActivityAt: Date?
+    private var activeVehicleSignals = Set<VehicleSignalSource>()
+    private var recentBluetoothVehicleSignal: VehicleSignalRecord?
+    private var knownVehiclePeripheralNames = Set<String>()
+    private var bluetoothScanStopTask: Task<Void, Never>?
 
     private enum Keys {
         static let isEnabled = "smartParking.enabled"
         static let lastAutoArmRecord = "smartParking.lastAutoArmRecord"
         static let recentVehicleSignal = "smartParking.recentVehicleSignal"
         static let lastInferenceAssessment = "smartParking.lastInferenceAssessment"
+        static let knownVehiclePeripheralNames = "smartParking.knownVehiclePeripheralNames"
     }
 
     nonisolated private static let duplicateArmSuppressionWindow: TimeInterval = 12 * 60 * 60
@@ -180,6 +221,17 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let currentLocationCorrectionMaximumEventOffset: TimeInterval = 5 * 60
     nonisolated private static let currentLocationCorrectionMaximumAccuracyMeters: CLLocationAccuracy = 30
     nonisolated private static let currentLocationCorrectionDistanceMeters: CLLocationDistance = 45
+    nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
+    nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
+    nonisolated private static let bluetoothVehicleSignalFreshnessWindow: TimeInterval = 120
+    nonisolated private static let automotiveSignalFreshnessWindow: TimeInterval = 6 * 60
+    nonisolated private static let bluetoothScanDuration: TimeInterval = 10
+    nonisolated private static let carPlaySceneRoleRawValue = "CPTemplateApplicationSceneSessionRoleApplication"
+    nonisolated private static let likelyVehiclePeripheralKeywords = [
+        "car", "auto", "bmw", "audi", "tesla", "ford", "toyota", "honda",
+        "hyundai", "kia", "chevrolet", "chevy", "mercedes", "benz", "lexus",
+        "nissan", "mazda", "volkswagen", "vw", "subaru", "gmc", "ram", "jeep"
+    ]
 
     init(
         parkingReminderStore: ParkingReminderStore,
@@ -207,6 +259,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         lastAutoArmRecord = Self.loadAutoArmRecord(from: defaults)
         recentVehicleSignal = Self.loadVehicleSignalRecord(from: defaults)
         lastInferenceAssessment = Self.loadInferenceAssessment(from: defaults)
+        knownVehiclePeripheralNames = Set(defaults.stringArray(forKey: Keys.knownVehiclePeripheralNames) ?? [])
+        bluetoothManager = CBCentralManager(delegate: self, queue: nil, options: [
+            CBCentralManagerOptionShowPowerAlertKey: false
+        ])
 
         activeReminderCancellable = parkingReminderStore.$activeReminder
             .receive(on: DispatchQueue.main)
@@ -222,6 +278,20 @@ final class SmartParkingStore: NSObject, ObservableObject {
             .store(in: &notificationCancellables)
 
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshVehicleConnectionEvidence()
+            }
+            .store(in: &notificationCancellables)
+
+        NotificationCenter.default.publisher(for: UIScene.didActivateNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshVehicleConnectionEvidence()
+            }
+            .store(in: &notificationCancellables)
+
+        NotificationCenter.default.publisher(for: UIScene.didDisconnectNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshVehicleConnectionEvidence()
@@ -383,7 +453,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         motionAuthorizationStatus = CMMotionActivityManager.authorizationStatus()
         if activity.automotive, activity.confidence != .low {
+            recentAutomotiveActivityAt = activity.startDate
             locationManager.startUpdatingLocation()
+            startBluetoothVehicleScanIfHelpful()
+            await retireSavedParkedSpotIfUserIsDriving(
+                hasAutomotiveSignal: true,
+                latestLocation: locationManager.location
+            )
         }
         if let event = parkingCaptureEngine.ingest(activity: activity) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -395,12 +471,53 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func handleLocationUpdates(_ locations: [CLLocation]) async {
         guard isEnabled else { return }
+        if let latestLocation = locations.last {
+            await retireSavedParkedSpotIfUserIsDriving(
+                hasAutomotiveSignal: false,
+                latestLocation: latestLocation
+            )
+        }
         if let event = parkingCaptureEngine.ingest(locations: locations) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             await processParkingCaptureEvent(event)
         } else {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
         }
+    }
+
+    private func retireSavedParkedSpotIfUserIsDriving(
+        hasAutomotiveSignal: Bool,
+        latestLocation: CLLocation?
+    ) async {
+        guard parkingReminderStore.hasRememberedParkedLocations,
+              let reminder = parkingReminderStore.savedParkedLocation else {
+            return
+        }
+
+        let parkedLocation = CLLocation(
+            latitude: reminder.coordinate.latitude,
+            longitude: reminder.coordinate.longitude
+        )
+
+        if hasAutomotiveSignal, let latestLocation {
+            let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
+            if distanceFromSavedSpot >= Self.resumedDrivingMinimumDistanceFromSavedSpot {
+                await parkingReminderStore.retireCurrentParkedSpotForDriving()
+                return
+            }
+        }
+
+        guard let latestLocation else { return }
+        guard latestLocation.speed >= Self.resumedDrivingSpeedMetersPerSecond else { return }
+
+        let distanceThreshold = max(
+            Self.resumedDrivingMinimumDistanceFromSavedSpot,
+            reminder.radiusMeters + 35
+        )
+        let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
+        guard distanceFromSavedSpot >= distanceThreshold else { return }
+
+        await parkingReminderStore.retireCurrentParkedSpotForDriving()
     }
 
     private func processParkingCaptureEvent(_ event: ParkingCaptureEvent) async {
@@ -572,14 +689,15 @@ final class SmartParkingStore: NSObject, ObservableObject {
         case .newDeviceAvailable, .routeConfigurationChange, .override, .wakeFromSleep:
             refreshVehicleConnectionEvidence()
             if let record = currentVehicleSignalRecord() {
-                parkingCaptureEngine.vehicleConnected(summary: record.summary)
+                parkingCaptureEngine.vehicleConnected(summary: record.source.captureToken)
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                 locationManager.startUpdatingLocation()
+                startBluetoothVehicleScanIfHelpful()
             }
         case .oldDeviceUnavailable:
             let previousOutputs = (userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription)?.outputs ?? []
             if let disconnectedRecord = vehicleSignalRecord(for: previousOutputs) {
-                if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.summary) {
+                if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
                     parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                     Task {
                         await processParkingCaptureEvent(event)
@@ -596,13 +714,17 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func refreshVehicleConnectionEvidence() {
         pruneStaleVehicleConnectionEvidence()
+        let nextSignals = currentActiveVehicleSignals()
+        isCarPlaySignalActive = nextSignals.contains(.carPlay)
+        applyVehicleSignalTransitions(nextSignals)
 
-        guard let record = currentVehicleSignalRecord() else { return }
-
-        recentVehicleSignal = record
-        persist(record)
-        parkingCaptureEngine.vehicleConnected(summary: record.summary)
-        parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+        if let strongestRecord = strongestVehicleSignalRecord(from: nextSignals) {
+            recentVehicleSignal = strongestRecord
+            persist(strongestRecord)
+        } else {
+            recentVehicleSignal = nil
+            defaults.removeObject(forKey: Keys.recentVehicleSignal)
+        }
     }
 
     private func pruneStaleVehicleConnectionEvidence() {
@@ -615,6 +737,61 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func currentVehicleSignalRecord() -> VehicleSignalRecord? {
         vehicleSignalRecord(for: AVAudioSession.sharedInstance().currentRoute.outputs)
+    }
+
+    private func currentActiveVehicleSignals() -> Set<VehicleSignalSource> {
+        var signals = Set<VehicleSignalSource>()
+
+        if isCarPlaySceneActive() {
+            signals.insert(.carPlay)
+        }
+
+        if let routeRecord = currentVehicleSignalRecord() {
+            signals.insert(routeRecord.source)
+        }
+
+        if let bluetoothSignal = recentBluetoothVehicleSignal,
+           Date().timeIntervalSince(bluetoothSignal.detectedAt) <= Self.bluetoothVehicleSignalFreshnessWindow {
+            signals.insert(bluetoothSignal.source)
+        }
+
+        return signals
+    }
+
+    private func strongestVehicleSignalRecord(from signals: Set<VehicleSignalSource>) -> VehicleSignalRecord? {
+        guard let strongest = signals.max(by: { $0.priority < $1.priority }) else { return nil }
+
+        switch strongest {
+        case .carPlay:
+            return VehicleSignalRecord(source: .carPlay, detectedAt: .now, routeName: nil)
+        case .carAudio, .bluetoothAudio:
+            return currentVehicleSignalRecord()
+        case .coreBluetoothVehicle:
+            return recentBluetoothVehicleSignal
+        }
+    }
+
+    private func applyVehicleSignalTransitions(_ nextSignals: Set<VehicleSignalSource>) {
+        let removed = activeVehicleSignals.subtracting(nextSignals)
+        let added = nextSignals.subtracting(activeVehicleSignals)
+
+        for source in removed.sorted(by: { $0.priority > $1.priority }) {
+            if let event = parkingCaptureEngine.vehicleDisconnected(summary: source.captureToken) {
+                parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+                Task {
+                    await processParkingCaptureEvent(event)
+                }
+            } else {
+                parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            }
+        }
+
+        for source in added.sorted(by: { $0.priority > $1.priority }) {
+            parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
+            parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+        }
+
+        activeVehicleSignals = nextSignals
     }
 
     private func vehicleSignalRecord(for outputs: [AVAudioSessionPortDescription]) -> VehicleSignalRecord? {
@@ -639,6 +816,77 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         return nil
+    }
+
+    private func isCarPlaySceneActive() -> Bool {
+        UIApplication.shared.connectedScenes.contains(where: { scene in
+            if scene.session.role.rawValue == Self.carPlaySceneRoleRawValue {
+                return true
+            }
+
+            if let windowScene = scene as? UIWindowScene {
+                return windowScene.traitCollection.userInterfaceIdiom == .carPlay
+            }
+
+            return false
+        })
+    }
+
+    private func startBluetoothVehicleScanIfHelpful() {
+        guard isEnabled else { return }
+        guard let bluetoothManager, bluetoothManager.state == .poweredOn else { return }
+        guard shouldAttemptBluetoothVehicleScan else { return }
+
+        bluetoothScanStopTask?.cancel()
+        bluetoothManager.stopScan()
+        bluetoothManager.scanForPeripherals(withServices: nil, options: [
+            CBCentralManagerScanOptionAllowDuplicatesKey: false
+        ])
+
+        bluetoothScanStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.bluetoothScanDuration))
+            self?.bluetoothManager?.stopScan()
+        }
+    }
+
+    private var shouldAttemptBluetoothVehicleScan: Bool {
+        if !activeVehicleSignals.isEmpty {
+            return true
+        }
+        guard let recentAutomotiveActivityAt else { return false }
+        return Date().timeIntervalSince(recentAutomotiveActivityAt) <= Self.automotiveSignalFreshnessWindow
+    }
+
+    private func handleDiscoveredBluetoothPeripheral(_ peripheral: CBPeripheral) {
+        guard let name = normalizedRouteName(peripheral.name) else { return }
+        guard isLikelyVehiclePeripheralName(name) else { return }
+
+        knownVehiclePeripheralNames.insert(name)
+        defaults.set(Array(knownVehiclePeripheralNames).sorted(), forKey: Keys.knownVehiclePeripheralNames)
+
+        recentBluetoothVehicleSignal = VehicleSignalRecord(
+            source: .coreBluetoothVehicle,
+            detectedAt: .now,
+            routeName: name
+        )
+        refreshVehicleConnectionEvidence()
+    }
+
+    private func isLikelyVehiclePeripheralName(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+
+        if knownVehiclePeripheralNames.contains(name) {
+            return true
+        }
+
+        if let routeRecord = currentVehicleSignalRecord(),
+           let routeName = routeRecord.routeName?.lowercased(),
+           !routeName.isEmpty,
+           normalized.contains(routeName) || routeName.contains(normalized) {
+            return true
+        }
+
+        return Self.likelyVehiclePeripheralKeywords.contains(where: { normalized.contains($0) })
     }
 
     private func persist(_ record: AutoArmRecord) {
@@ -715,5 +963,32 @@ extension SmartParkingStore: CLLocationManagerDelegate {
         #if DEBUG
         print("SpotRelay smart parking location error:", error.localizedDescription)
         #endif
+    }
+}
+
+extension SmartParkingStore: CBCentralManagerDelegate {
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if central.state != .poweredOn {
+                self.bluetoothScanStopTask?.cancel()
+                self.bluetoothManager?.stopScan()
+                self.recentBluetoothVehicleSignal = nil
+            } else {
+                self.startBluetoothVehicleScanIfHelpful()
+            }
+            self.refreshVehicleConnectionEvidence()
+        }
+    }
+
+    nonisolated func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String : Any],
+        rssi RSSI: NSNumber
+    ) {
+        Task { @MainActor [weak self] in
+            self?.handleDiscoveredBluetoothPeripheral(peripheral)
+        }
     }
 }

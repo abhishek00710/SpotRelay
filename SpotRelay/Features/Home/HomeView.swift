@@ -19,6 +19,7 @@ struct HomeView: View {
     @State private var isShowingProfileSheet = false
     @State private var isEditingParkedPinOnMap = false
     @State private var editingParkedCoordinate: CLLocationCoordinate2D?
+    @State private var editingMapRegion: MKCoordinateRegion?
     @State private var lastObservedMapRegion: MKCoordinateRegion?
     @State private var parkingReminderAlert: HomeViewAlert?
     @State private var nearbySheetHeaderHeight: CGFloat = 0
@@ -67,7 +68,7 @@ struct HomeView: View {
             )
         }
         .sheet(isPresented: $isShowingParkedLocationSheet) {
-            if let parkedLocation = parkingReminderStore.savedParkedLocation {
+            if let parkedLocation = parkingReminderStore.latestRememberedParkedLocation {
                 ParkedLocationDetailView(initialReminder: parkedLocation)
                     .environmentObject(spotStore)
                     .environmentObject(parkingReminderStore)
@@ -88,6 +89,13 @@ struct HomeView: View {
             if isEditingParkedPinOnMap, let editingCoordinate = editingParkedCoordinate {
                 EditableParkedMapView(
                     initialRegion: editingMapInitialRegion(for: editingCoordinate),
+                    visibleRegion: Binding(
+                        get: { editingMapRegion ?? editingMapInitialRegion(for: editingCoordinate) },
+                        set: { newValue in
+                            editingMapRegion = newValue
+                            lastObservedMapRegion = newValue
+                        }
+                    ),
                     parkedCoordinate: Binding(
                         get: { editingParkedCoordinate ?? editingCoordinate },
                         set: { newValue in editingParkedCoordinate = newValue }
@@ -165,13 +173,6 @@ struct HomeView: View {
                     }
                 }
 
-                if parkingReminderStore.savedParkedLocation != nil {
-                    HStack {
-                        Spacer()
-                        parkedLocationShortcutButton
-                    }
-                }
-
                 if shouldShowSmartParkingButton {
                     HStack {
                         Spacer()
@@ -218,7 +219,7 @@ struct HomeView: View {
                     await saveEditedParkedPinFromMap()
                 }
             } else {
-                focusOnSavedParkedLocation()
+                isShowingParkedLocationSheet = true
             }
         } label: {
             Group {
@@ -232,7 +233,7 @@ struct HomeView: View {
                         .foregroundStyle(SpotRelayTheme.textPrimary)
                 }
             }
-            .frame(width: 46, height: 46)
+            .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
         .glassPanel(
@@ -243,7 +244,7 @@ struct HomeView: View {
             shadowRadius: 14,
             shadowY: 8
         )
-        .accessibilityLabel("Center on parked location")
+        .accessibilityLabel("Open parked locations")
     }
 
     private var notificationButton: some View {
@@ -372,6 +373,10 @@ struct HomeView: View {
                         notificationButton
                     }
                     profileButton
+                }
+
+                if parkingReminderStore.hasRememberedParkedLocations {
+                    parkedLocationShortcutButton
                 }
             }
         }
@@ -805,11 +810,11 @@ struct HomeView: View {
         if spotStore.currentUserLeavingSignal != nil {
             return "timer"
         }
-        return parkingReminderStore.savedParkedLocation != nil ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"
+        return parkingReminderStore.latestRememberedParkedLocation != nil ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"
     }
 
     private var hasShareableLocation: Bool {
-        parkingReminderStore.savedParkedLocation != nil || spotStore.userCoordinate != nil
+        parkingReminderStore.latestRememberedParkedLocation != nil || spotStore.userCoordinate != nil
     }
 
     private func recenterOnUser() {
@@ -823,7 +828,10 @@ struct HomeView: View {
     }
 
     private func focusOnSavedParkedLocation() {
-        guard let reminder = parkingReminderStore.savedParkedLocation else { return }
+        guard let reminder = parkingReminderStore.savedParkedLocation else {
+            isShowingParkedLocationSheet = true
+            return
+        }
 
         if isEditingParkedPinOnMap {
             editingParkedCoordinate = reminder.coordinate
@@ -844,14 +852,21 @@ struct HomeView: View {
     }
 
     private func beginParkedPinEditing(using reminder: ParkingReminderStore.Reminder) {
+        editingMapRegion = lastObservedMapRegion ?? editingMapInitialRegion(for: reminder.coordinate)
         editingParkedCoordinate = reminder.coordinate
         collapseNearbySheetIfNeeded()
         isEditingParkedPinOnMap = true
     }
 
     private func cancelParkedPinEditing() {
+        if let editingMapRegion {
+            lastObservedMapRegion = editingMapRegion
+            pendingRecenterOnLocationUpdate = false
+            setCameraPosition(.region(editingMapRegion), animated: false)
+        }
         isEditingParkedPinOnMap = false
         editingParkedCoordinate = nil
+        editingMapRegion = nil
     }
 
     private func editingMapInitialRegion(for coordinate: CLLocationCoordinate2D) -> MKCoordinateRegion {
@@ -866,7 +881,7 @@ struct HomeView: View {
 
     private func saveEditedParkedPinFromMap() async {
         guard let coordinate = editingParkedCoordinate,
-              let reminder = parkingReminderStore.savedParkedLocation else {
+              let reminder = parkingReminderStore.savedParkedLocation ?? parkingReminderStore.latestRememberedParkedLocation else {
             return
         }
 
@@ -878,6 +893,11 @@ struct HomeView: View {
                 areaLabel: areaLabel,
                 radiusMeters: reminder.radiusMeters
             )
+            if let editingMapRegion {
+                lastObservedMapRegion = editingMapRegion
+                pendingRecenterOnLocationUpdate = false
+                setCameraPosition(.region(editingMapRegion), animated: false)
+            }
             cancelParkedPinEditing()
         } catch {
             parkingReminderAlert = HomeViewAlert(
@@ -1222,13 +1242,18 @@ struct HomeView: View {
 
 private struct EditableParkedMapView: UIViewRepresentable {
     let initialRegion: MKCoordinateRegion
+    @Binding var visibleRegion: MKCoordinateRegion
     @Binding var parkedCoordinate: CLLocationCoordinate2D
     let userCoordinate: CLLocationCoordinate2D?
     let nearbySpots: [ParkingSpotSignal]
     let currentUserID: String
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(parkedCoordinate: $parkedCoordinate, currentUserID: currentUserID)
+        Coordinator(
+            visibleRegion: $visibleRegion,
+            parkedCoordinate: $parkedCoordinate,
+            currentUserID: currentUserID
+        )
     }
 
     func makeUIView(context: Context) -> MKMapView {
@@ -1259,11 +1284,18 @@ private struct EditableParkedMapView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
+        @Binding var visibleRegion: MKCoordinateRegion
         @Binding var parkedCoordinate: CLLocationCoordinate2D
         var currentUserID: String
         private let parkedAnnotation = MKPointAnnotation()
+        private var hasAppliedInitialRegion = false
 
-        init(parkedCoordinate: Binding<CLLocationCoordinate2D>, currentUserID: String) {
+        init(
+            visibleRegion: Binding<MKCoordinateRegion>,
+            parkedCoordinate: Binding<CLLocationCoordinate2D>,
+            currentUserID: String
+        ) {
+            _visibleRegion = visibleRegion
             _parkedCoordinate = parkedCoordinate
             self.currentUserID = currentUserID
             super.init()
@@ -1276,6 +1308,11 @@ private struct EditableParkedMapView: UIViewRepresentable {
             parkedCoordinate: CLLocationCoordinate2D,
             nearbySpots: [ParkingSpotSignal]
         ) {
+            if !hasAppliedInitialRegion {
+                hasAppliedInitialRegion = true
+                mapView.setRegion(visibleRegion, animated: false)
+            }
+
             if !mapView.annotations.contains(where: { $0 === parkedAnnotation }) {
                 mapView.addAnnotation(parkedAnnotation)
             }
@@ -1301,14 +1338,13 @@ private struct EditableParkedMapView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             if annotation === parkedAnnotation {
                 let identifier = "EditableParkedPin"
-                let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
-                    ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                let view = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? HostedParkedAnnotationView
+                    ?? HostedParkedAnnotationView(annotation: annotation, reuseIdentifier: identifier)
                 view.annotation = annotation
                 view.canShowCallout = false
                 view.isDraggable = true
-                view.markerTintColor = UIColor(SpotRelayTheme.success)
-                view.glyphImage = UIImage(systemName: "car.fill")
                 view.displayPriority = .required
+                view.configureForCurrentAppearance()
                 return view
             }
 
@@ -1339,6 +1375,40 @@ private struct EditableParkedMapView: UIViewRepresentable {
                 break
             }
         }
+
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            visibleRegion = mapView.region
+        }
+    }
+}
+
+private final class HostedParkedAnnotationView: MKAnnotationView {
+    private let hostedView = UIHostingController(rootView: ParkedCarPinView()).view!
+
+    override init(annotation: (any MKAnnotation)?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        collisionMode = .rectangle
+        centerOffset = CGPoint(x: 0, y: -26)
+        backgroundColor = .clear
+        canShowCallout = false
+        hostedView.backgroundColor = .clear
+        hostedView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hostedView)
+        NSLayoutConstraint.activate([
+            hostedView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostedView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostedView.topAnchor.constraint(equalTo: topAnchor),
+            hostedView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configureForCurrentAppearance() {
+        frame = CGRect(origin: .zero, size: CGSize(width: 86, height: 72))
     }
 }
 
@@ -1435,13 +1505,24 @@ private struct ParkedLocationDetailView: View {
     let initialReminder: ParkingReminderStore.Reminder
 
     @State private var localAlert: HomeViewAlert?
+    @State private var isHistoryExpanded = false
 
     private var reminder: ParkingReminderStore.Reminder {
-        parkingReminderStore.savedParkedLocation ?? initialReminder
+        parkingReminderStore.latestRememberedParkedLocation ?? initialReminder
+    }
+
+    private var history: [ParkingReminderStore.Reminder] {
+        parkingReminderStore.parkedLocationHistory
     }
 
     private var statusTitle: String {
-        parkingReminderStore.activeReminder != nil ? L10n.tr("Reminder armed") : L10n.tr("Ready to share")
+        if parkingReminderStore.activeReminder != nil {
+            return L10n.tr("Reminder armed")
+        }
+        if parkingReminderStore.savedParkedLocation != nil {
+            return L10n.tr("Ready to share")
+        }
+        return L10n.tr("History only")
     }
 
     private var savedRelativeText: String {
@@ -1461,6 +1542,7 @@ private struct ParkedLocationDetailView: View {
                     heroCard
                     detailPanel
                     directionsPanel
+                    historyPanel
                     controlsPanel
                 }
                 .padding(20)
@@ -1617,6 +1699,60 @@ private struct ParkedLocationDetailView: View {
         )
     }
 
+    private var historyPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recent parked locations")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text("SpotRelay remembers your latest parked spots so the next stop can replace the current pin without losing context.")
+                        .font(.subheadline)
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        isHistoryExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(isHistoryExpanded ? "Collapse" : "Expand")
+                            .font(.caption.weight(.bold))
+                        Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption.weight(.bold))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if isHistoryExpanded {
+                VStack(spacing: 12) {
+                    ForEach(Array(history.enumerated()), id: \.element.createdAt) { index, historyReminder in
+                        historyRow(reminder: historyReminder, isCurrent: index == 0 && parkingReminderStore.savedParkedLocation != nil)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
     private var controlsPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Manage parked pin")
@@ -1663,6 +1799,8 @@ private struct ParkedLocationDetailView: View {
                 .foregroundStyle(SpotRelayTheme.warning)
             }
             .buttonStyle(.plain)
+            .disabled(parkingReminderStore.savedParkedLocation == nil)
+            .opacity(parkingReminderStore.savedParkedLocation == nil ? 0.55 : 1)
         }
         .padding(20)
         .glassPanel(
@@ -1682,6 +1820,43 @@ private struct ParkedLocationDetailView: View {
             .padding(.vertical, 7)
             .background(SpotRelayTheme.badgeFill, in: Capsule())
             .foregroundStyle(SpotRelayTheme.badgeText)
+    }
+
+    private func historyRow(reminder: ParkingReminderStore.Reminder, isCurrent: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill((isCurrent ? SpotRelayTheme.success : SpotRelayTheme.badgeFill).opacity(0.18))
+                    .frame(width: 38, height: 38)
+
+                Image(systemName: isCurrent ? "car.circle.fill" : "clock.arrow.circlepath")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isCurrent ? SpotRelayTheme.success : SpotRelayTheme.primary)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(reminder.areaLabel ?? "Saved parking spot")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    if isCurrent {
+                        badge(text: "Current")
+                    }
+                }
+
+                Text(reminder.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+
+                Text(reminder.areaSummary)
+                    .font(.caption)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 
     private func detailRow(icon: String, title: String, value: String, subtitle: String) -> some View {

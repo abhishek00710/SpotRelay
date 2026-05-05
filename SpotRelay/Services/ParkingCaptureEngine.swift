@@ -63,8 +63,8 @@ struct ParkingCaptureEngine {
         let startedAt: Date
         var samples: [Sample]
         var evidence: Set<String>
-        var vehicleSignalSeen: Bool
-        var vehicleConnectionActive: Bool
+        var seenVehicleSignals: Set<String>
+        var activeVehicleSignals: Set<String>
         var sawDrivingMotion: Bool
         var distanceMeters: CLLocationDistance
         var lastMovingAt: Date
@@ -77,6 +77,14 @@ struct ParkingCaptureEngine {
 
         var isQualifiedDrive: Bool {
             sawDrivingMotion || distanceMeters >= ParkingCaptureEngine.minimumDriveDistanceMeters
+        }
+
+        var vehicleSignalSeen: Bool {
+            !seenVehicleSignals.isEmpty
+        }
+
+        var vehicleConnectionActive: Bool {
+            !activeVehicleSignals.isEmpty
         }
     }
 
@@ -131,8 +139,8 @@ struct ParkingCaptureEngine {
     mutating func vehicleConnected(summary: String, at date: Date = .now) {
         updatedAt = date
         ensureSession(startedAt: date, evidence: "vehicle signal")
-        session?.vehicleSignalSeen = true
-        session?.vehicleConnectionActive = true
+        session?.seenVehicleSignals.insert(summary)
+        session?.activeVehicleSignals.insert(summary)
         session?.evidence.insert(summary)
         lastReason = "Vehicle signal connected"
     }
@@ -144,11 +152,15 @@ struct ParkingCaptureEngine {
             return nil
         }
 
-        activeSession.vehicleSignalSeen = true
-        activeSession.vehicleConnectionActive = false
+        activeSession.seenVehicleSignals.insert(summary)
+        activeSession.activeVehicleSignals.remove(summary)
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
         session = activeSession
+        guard activeSession.activeVehicleSignals.isEmpty else {
+            lastReason = "One vehicle signal disconnected, but another is still active"
+            return nil
+        }
         let parkedAt = activeSession.stoppedSince ?? date
         return finalize(
             source: .vehicleDisconnect,
@@ -240,8 +252,8 @@ struct ParkingCaptureEngine {
                 startedAt: startedAt,
                 samples: initialSamples,
                 evidence: [evidence],
-                vehicleSignalSeen: false,
-                vehicleConnectionActive: false,
+                seenVehicleSignals: [],
+                activeVehicleSignals: [],
                 sawDrivingMotion: evidence == "automotive motion" || evidence == "driving speed",
                 distanceMeters: 0,
                 lastMovingAt: startedAt,
@@ -439,8 +451,12 @@ struct ParkingCaptureEngine {
             score += 12
         }
 
-        if session.vehicleSignalSeen {
-            score += 18
+        if session.evidence.contains("vehicle-signal:carplay") {
+            score += 34
+        } else if session.evidence.contains("vehicle-signal:corebluetooth") {
+            score += 24
+        } else if session.vehicleSignalSeen {
+            score += 16
         }
 
         if session.distanceMeters >= Self.minimumDriveDistanceMeters {
