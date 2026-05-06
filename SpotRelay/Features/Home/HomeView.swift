@@ -1520,93 +1520,31 @@ private struct HomeViewAlert: Identifiable {
 
 private struct ParkedCarPinView: View {
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 6) {
-                Text(L10n.tr("Parked"))
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(SpotRelayTheme.chrome, in: Capsule())
-                    .foregroundStyle(SpotRelayTheme.success)
+        ZStack {
+            Circle()
+                .fill(SpotRelayTheme.chrome)
+                .frame(width: 18, height: 18)
 
-                ZStack {
-                    Circle()
-                        .fill(SpotRelayTheme.chrome)
-                        .frame(width: 18, height: 18)
-
-                    Image(systemName: "car.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.white, SpotRelayTheme.success)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 6)
-            .padding(.bottom, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(SpotRelayTheme.strongGlassTint)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
-                    )
-            )
-            .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
-
-            TrianglePointer()
-                .fill(SpotRelayTheme.strongGlassTint)
-                .frame(width: 12, height: 16)
-                .overlay(
-                    TrianglePointer()
-                        .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
-                )
-                .offset(y: -2)
+            Image(systemName: "car.circle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.white, SpotRelayTheme.success)
         }
+        .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
     }
 }
 
 private struct SelectedParkedHistoryPinView: View {
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 6) {
-                Text(L10n.tr("Selected"))
-                    .font(.caption2.weight(.bold))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(SpotRelayTheme.chrome, in: Capsule())
-                    .foregroundStyle(SpotRelayTheme.primary)
+        ZStack {
+            Circle()
+                .fill(SpotRelayTheme.chrome)
+                .frame(width: 18, height: 18)
 
-                ZStack {
-                    Circle()
-                        .fill(SpotRelayTheme.chrome)
-                        .frame(width: 18, height: 18)
-
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundStyle(.white, SpotRelayTheme.primary)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 6)
-            .padding(.bottom, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(SpotRelayTheme.strongGlassTint)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
-                    )
-            )
-            .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
-
-            TrianglePointer()
-                .fill(SpotRelayTheme.strongGlassTint)
-                .frame(width: 12, height: 16)
-                .overlay(
-                    TrianglePointer()
-                        .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
-                )
-                .offset(y: -2)
+            Image(systemName: "mappin.circle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.white, SpotRelayTheme.primary)
         }
+        .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
     }
 }
 
