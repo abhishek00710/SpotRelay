@@ -47,6 +47,10 @@ struct ProfileView: View {
         return L10n.format("Driver ID • %@", String(suffix))
     }
 
+    private var appShareMessage: String {
+        L10n.tr("I'm using SpotRelay for real-time parking handoffs. Pass the spot. Skip the stress.")
+    }
+
     private var profileDisplayName: String {
         let trimmedDraftName = draftDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let rawName = trimmedDraftName.isEmpty ? user.displayName : trimmedDraftName
@@ -223,6 +227,8 @@ struct ProfileView: View {
                 }
             }
 
+            shareSpotRelayRow
+
             VStack(alignment: .leading, spacing: 14) {
                 Button {
                     saveProfile()
@@ -261,6 +267,44 @@ struct ProfileView: View {
             shadowRadius: 24,
             shadowY: 12
         )
+    }
+
+    private var shareSpotRelayRow: some View {
+        ShareLink(item: appShareMessage) {
+            HStack(spacing: 12) {
+                Image(systemName: "square.and.arrow.up.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(SpotRelayTheme.heroGradient, in: Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Share SpotRelay")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text("Invite another driver to pass the spot and skip the stress.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "arrow.up.forward")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.primary)
+                    .frame(width: 32, height: 32)
+                    .background(SpotRelayTheme.badgeFill, in: Circle())
+            }
+            .padding(14)
+            .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var accountRecoveryCard: some View {

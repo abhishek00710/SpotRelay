@@ -59,6 +59,11 @@ struct ParkingCaptureEngine {
         }
     }
 
+    private struct LocationSelection {
+        let location: CLLocation
+        let evidence: [String]
+    }
+
     private struct Session {
         let startedAt: Date
         var samples: [Sample]
@@ -97,19 +102,24 @@ struct ParkingCaptureEngine {
     private static let movingSpeedMetersPerSecond: CLLocationSpeed = 3.0
     private static let stoppedSpeedMetersPerSecond: CLLocationSpeed = 1.4
     private static let maximumUsefulAccuracyMeters: CLLocationAccuracy = 80
-    private static let maximumParkingAccuracyMeters: CLLocationAccuracy = 35
-    private static let idealParkingAccuracyMeters: CLLocationAccuracy = 18
+    private static let maximumParkingAccuracyMeters: CLLocationAccuracy = 28
+    private static let requiredAutoSaveAccuracyMeters: CLLocationAccuracy = 24
+    private static let idealParkingAccuracyMeters: CLLocationAccuracy = 12
     private static let maximumWalkingSpeedMetersPerSecond: CLLocationSpeed = 3.2
     private static let recentSampleRetention: TimeInterval = 10 * 60
     private static let sessionSampleRetention: TimeInterval = 30 * 60
     private static let parkingWindowBeforeEvent: TimeInterval = 3 * 60
-    private static let parkingWindowAfterEvent: TimeInterval = 25
-    private static let disconnectPostStopCandidateWindow: TimeInterval = 12
+    private static let parkingWindowAfterEvent: TimeInterval = 16
+    private static let disconnectPostStopCandidateWindow: TimeInterval = 5
     private static let stoppedDwellDuration: TimeInterval = 90
     private static let minimumDriveDuration: TimeInterval = 2 * 60
     private static let minimumDriveDistanceMeters: CLLocationDistance = 250
     private static let maximumSamples = 180
     private static let minimumSaveConfidence = 75
+    private static let clusteredStopRadiusMeters: CLLocationDistance = 18
+    private static let clusteredStopMinimumSupport = 2
+    private static let preferredStopWindowBeforeParkedAt: TimeInterval = 28
+    private static let preferredStopWindowAfterParkedAt: TimeInterval = 4
 
     var snapshot: ParkingCaptureSnapshot {
         let activeSession = session
@@ -366,7 +376,7 @@ struct ParkingCaptureEngine {
         reason: String
     ) -> ParkingCaptureEvent? {
         guard let activeSession = session else { return nil }
-        guard let location = bestParkingLocation(
+        guard let selection = bestParkingLocation(
             from: activeSession,
             parkedAt: parkedAt,
             selectionEnd: selectionEnd,
@@ -376,7 +386,12 @@ struct ParkingCaptureEngine {
             return nil
         }
 
-        let confidenceScore = confidence(for: activeSession, location: location, source: source)
+        guard selection.location.horizontalAccuracy <= Self.requiredAutoSaveAccuracyMeters else {
+            lastReason = "Skipped save: GPS still too wide at ±\(Int(selection.location.horizontalAccuracy.rounded()))m"
+            return nil
+        }
+
+        let confidenceScore = confidence(for: activeSession, location: selection.location, source: source)
         guard confidenceScore >= Self.minimumSaveConfidence else {
             lastReason = "Skipped save: low confidence \(confidenceScore)"
             return nil
@@ -384,10 +399,11 @@ struct ParkingCaptureEngine {
 
         var evidence = Array(activeSession.evidence).sorted()
         evidence.append(source.label)
-        evidence.append("GPS ±\(Int(location.horizontalAccuracy.rounded()))m")
+        evidence.append(contentsOf: selection.evidence)
+        evidence.append("GPS ±\(Int(selection.location.horizontalAccuracy.rounded()))m")
 
         let event = ParkingCaptureEvent(
-            location: location,
+            location: selection.location,
             parkedAt: parkedAt,
             confidenceScore: confidenceScore,
             evidence: evidence,
@@ -404,7 +420,7 @@ struct ParkingCaptureEngine {
         parkedAt: Date,
         selectionEnd: Date,
         source: ParkingCaptureEvent.Source
-    ) -> CLLocation? {
+    ) -> LocationSelection? {
         let earliest = parkedAt.addingTimeInterval(-Self.parkingWindowBeforeEvent)
         let latest = max(
             parkedAt.addingTimeInterval(Self.parkingWindowAfterEvent),
@@ -432,10 +448,58 @@ struct ParkingCaptureEngine {
                 return true
             }
 
-        return candidates.min { lhs, rhs in
-            score(location: lhs, parkedAt: parkedAt, selectionEnd: latest, source: source) <
-                score(location: rhs, parkedAt: parkedAt, selectionEnd: latest, source: source)
+        guard !candidates.isEmpty else { return nil }
+
+        let lowSpeedCandidates = candidates.filter {
+            $0.speed < 0 || $0.speed <= Self.stoppedSpeedMetersPerSecond
         }
+        let preferredStopCandidates = lowSpeedCandidates.filter { location in
+            location.timestamp >= parkedAt.addingTimeInterval(-Self.preferredStopWindowBeforeParkedAt)
+            && location.timestamp <= parkedAt.addingTimeInterval(Self.preferredStopWindowAfterParkedAt)
+        }
+
+        let clusteredPreferredCandidates = preferredStopCandidates.filter {
+            clusterSupportCount(for: $0, in: preferredStopCandidates) >= Self.clusteredStopMinimumSupport
+        }
+
+        let prioritizedCandidates: [CLLocation]
+        let selectionEvidence: [String]
+        if !clusteredPreferredCandidates.isEmpty {
+            prioritizedCandidates = clusteredPreferredCandidates
+            selectionEvidence = ["clustered low-speed stop point"]
+        } else if !preferredStopCandidates.isEmpty {
+            prioritizedCandidates = preferredStopCandidates
+            selectionEvidence = ["preferred final stop window"]
+        } else if !lowSpeedCandidates.isEmpty {
+            prioritizedCandidates = lowSpeedCandidates
+            selectionEvidence = ["low-speed stop point"]
+        } else {
+            prioritizedCandidates = candidates
+            selectionEvidence = ["fallback stop sample"]
+        }
+
+        let clusterAnchor = clusterAnchor(for: prioritizedCandidates)
+        guard let bestLocation = prioritizedCandidates.min(by: { lhs, rhs in
+            score(
+                location: lhs,
+                parkedAt: parkedAt,
+                selectionEnd: latest,
+                source: source,
+                clusterAnchor: clusterAnchor,
+                clusterSupport: clusterSupportCount(for: lhs, in: prioritizedCandidates)
+            ) < score(
+                location: rhs,
+                parkedAt: parkedAt,
+                selectionEnd: latest,
+                source: source,
+                clusterAnchor: clusterAnchor,
+                clusterSupport: clusterSupportCount(for: rhs, in: prioritizedCandidates)
+            )
+        }) else {
+            return nil
+        }
+
+        return LocationSelection(location: bestLocation, evidence: selectionEvidence)
     }
 
     private func confidence(
@@ -485,25 +549,62 @@ struct ParkingCaptureEngine {
         location: CLLocation,
         parkedAt: Date,
         selectionEnd: Date,
-        source: ParkingCaptureEvent.Source
+        source: ParkingCaptureEvent.Source,
+        clusterAnchor: CLLocation?,
+        clusterSupport: Int
     ) -> Double {
         let timeDistance: TimeInterval
         let afterParkingPenalty: Double
         if source == .locationDwell, location.timestamp >= parkedAt {
-            // GPS often stabilizes after the car stops. For dwell saves, prefer the
-            // best late stationary fix instead of the first noisy stop sample.
-            timeDistance = max(0, selectionEnd.timeIntervalSince(location.timestamp)) * 0.18
-            afterParkingPenalty = 0
+            timeDistance = max(0, selectionEnd.timeIntervalSince(location.timestamp)) * 0.12
+            afterParkingPenalty = location.timestamp > parkedAt ? 6 : 0
         } else if source == .vehicleDisconnect, location.timestamp > parkedAt {
             let secondsAfterStop = location.timestamp.timeIntervalSince(parkedAt)
-            timeDistance = secondsAfterStop * 0.75
-            afterParkingPenalty = 22 + min(secondsAfterStop, 15) * 1.6
+            timeDistance = secondsAfterStop * 1.35
+            afterParkingPenalty = 40 + min(secondsAfterStop, 10) * 4.2
         } else {
-            timeDistance = abs(location.timestamp.timeIntervalSince(parkedAt)) * 0.55
-            afterParkingPenalty = location.timestamp > parkedAt ? 8 : 0
+            timeDistance = abs(location.timestamp.timeIntervalSince(parkedAt)) * 0.42
+            afterParkingPenalty = location.timestamp > parkedAt ? 14 : 0
         }
-        let speedPenalty = max(location.speed, 0) * 8
-        return (location.horizontalAccuracy * 2.7) + timeDistance + speedPenalty + afterParkingPenalty
+        let speedPenalty = max(location.speed, 0) * 11
+        let clusterDistancePenalty: Double
+        if let clusterAnchor {
+            clusterDistancePenalty = location.distance(from: clusterAnchor) * 1.4
+        } else {
+            clusterDistancePenalty = 0
+        }
+        let supportBonus = Double(max(clusterSupport - 1, 0)) * 18
+        let lowSpeedBonus = (location.speed < 0 || location.speed <= Self.stoppedSpeedMetersPerSecond) ? 10.0 : 0
+        return (location.horizontalAccuracy * 3.1)
+            + timeDistance
+            + speedPenalty
+            + afterParkingPenalty
+            + clusterDistancePenalty
+            - supportBonus
+            - lowSpeedBonus
+    }
+
+    private func clusterSupportCount(for location: CLLocation, in candidates: [CLLocation]) -> Int {
+        candidates.reduce(into: 0) { count, candidate in
+            guard candidate.distance(from: location) <= Self.clusteredStopRadiusMeters else { return }
+            count += 1
+        }
+    }
+
+    private func clusterAnchor(for candidates: [CLLocation]) -> CLLocation? {
+        guard !candidates.isEmpty else { return nil }
+
+        let latitude = candidates.map(\.coordinate.latitude).reduce(0, +) / Double(candidates.count)
+        let longitude = candidates.map(\.coordinate.longitude).reduce(0, +) / Double(candidates.count)
+        let bestAccuracy = candidates.map(\.horizontalAccuracy).filter { $0 >= 0 }.min() ?? Self.maximumParkingAccuracyMeters
+        let latestTimestamp = candidates.map(\.timestamp).max() ?? .now
+        return CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: 0,
+            horizontalAccuracy: bestAccuracy,
+            verticalAccuracy: -1,
+            timestamp: latestTimestamp
+        )
     }
 
     private func shouldStartDrive(from location: CLLocation) -> Bool {

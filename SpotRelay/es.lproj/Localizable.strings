@@ -217,12 +217,15 @@
 "Save or restore with Apple" = "Guardar o restaurar con Apple";
 "Saving Apple sign-in..." = "Guardando inicio con Apple...";
 "Set up smart parking" = "Configurar estacionamiento inteligente";
+"I'm using SpotRelay for real-time parking handoffs. Pass the spot. Skip the stress." = "Estoy usando SpotRelay para traspasos de estacionamiento en tiempo real. Pasa el lugar. Evita el estrés.";
+"Invite another driver to pass the spot and skip the stress." = "Invita a otro conductor a pasar el lugar y evitar el estrés.";
 "Share Current Location" = "Compartir ubicación actual";
 "Share from" = "Compartir desde";
 "Share location needed" = "Se necesita ubicación para compartir";
 "Share My Spot" = "Compartir mi lugar";
 "Share Parked Spot" = "Compartir lugar estacionado";
 "Share point" = "Punto de compartir";
+"Share SpotRelay" = "Compartir SpotRelay";
 "Share a spot the moment you know you're leaving." = "Comparte un lugar en cuanto sepas que vas a salir.";
 "Share your spot and help nearby drivers." = "Comparte tu lugar y ayuda a conductores cercanos.";
 "Share your spot in under three seconds." = "Comparte tu lugar en menos de tres segundos.";

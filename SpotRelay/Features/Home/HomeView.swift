@@ -25,6 +25,7 @@ struct HomeView: View {
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
     @State private var parkedLocationToastMessage: String?
+    @State private var selectedParkedHistoryReminder: ParkingReminderStore.Reminder?
     @GestureState private var nearbySheetDragTranslation: CGFloat = 0
 
     var body: some View {
@@ -69,9 +70,15 @@ struct HomeView: View {
         }
         .sheet(isPresented: $isShowingParkedLocationSheet) {
             if let parkedLocation = parkingReminderStore.latestRememberedParkedLocation {
-                ParkedLocationDetailView(initialReminder: parkedLocation)
+                ParkedLocationDetailView(
+                    initialReminder: parkedLocation,
+                    onSelectReminder: { reminder in
+                        focusOnParkedReminder(reminder)
+                    }
+                )
                     .environmentObject(spotStore)
                     .environmentObject(parkingReminderStore)
+                    .environmentObject(smartParkingStore)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -118,6 +125,13 @@ struct HomeView: View {
                                 ParkedCarPinView()
                             }
                             .buttonStyle(.plain)
+                        }
+                    }
+
+                    if let selectedParkedHistoryReminder,
+                       selectedParkedHistoryReminder != parkingReminderStore.savedParkedLocation {
+                        Annotation("Selected parked spot", coordinate: selectedParkedHistoryReminder.coordinate) {
+                            SelectedParkedHistoryPinView()
                         }
                     }
 
@@ -376,7 +390,17 @@ struct HomeView: View {
                 }
 
                 if parkingReminderStore.hasRememberedParkedLocations {
-                    parkedLocationShortcutButton
+                    VStack(alignment: .trailing, spacing: 6) {
+                        parkedLocationShortcutButton
+                        if let winningSourceBadgeTitle = smartParkingStore.winningSourceBadgeTitle {
+                            Text(winningSourceBadgeTitle)
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(SpotRelayTheme.badgeFill, in: Capsule())
+                                .foregroundStyle(SpotRelayTheme.badgeText)
+                        }
+                    }
                 }
             }
         }
@@ -627,11 +651,27 @@ struct HomeView: View {
                         .background(SpotRelayTheme.badgeFill, in: Capsule())
                         .foregroundStyle(SpotRelayTheme.badgeText)
 
+                    if let winningSourceBadgeTitle = smartParkingStore.winningSourceBadgeTitle {
+                        Text(winningSourceBadgeTitle)
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(SpotRelayTheme.badgeFill, in: Capsule())
+                            .foregroundStyle(SpotRelayTheme.badgeText)
+                    }
+
 //                    Spacer(minLength: 0)
 //
 //                    Text("Details")
 //                        .font(.subheadline.weight(.semibold))
 //                        .foregroundStyle(SpotRelayTheme.primary)
+                }
+
+                if let winningSourceSummary = smartParkingStore.winningSourceSummary {
+                    Text(winningSourceSummary)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(18)
@@ -832,12 +872,17 @@ struct HomeView: View {
             isShowingParkedLocationSheet = true
             return
         }
+        focusOnParkedReminder(reminder)
+    }
 
+    private func focusOnParkedReminder(_ reminder: ParkingReminderStore.Reminder) {
         if isEditingParkedPinOnMap {
             editingParkedCoordinate = reminder.coordinate
             return
         }
 
+        selectedParkedHistoryReminder = reminder
+        isShowingParkedLocationSheet = false
         collapseNearbySheetIfNeeded()
         setCameraPosition(
             .region(
@@ -848,7 +893,7 @@ struct HomeView: View {
             ),
             animated: true
         )
-        //showParkedLocationToast(for: reminder)
+        showParkedLocationToast(for: reminder)
     }
 
     private func beginParkedPinEditing(using reminder: ParkingReminderStore.Reminder) {
@@ -1475,25 +1520,104 @@ private struct HomeViewAlert: Identifiable {
 
 private struct ParkedCarPinView: View {
     var body: some View {
-        VStack(spacing: 6) {
-            Text(L10n.tr("Parked"))
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(SpotRelayTheme.chrome, in: Capsule())
-                .foregroundStyle(SpotRelayTheme.success)
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                Text(L10n.tr("Parked"))
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(SpotRelayTheme.chrome, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.success)
 
-            ZStack {
-                Circle()
-                    .fill(SpotRelayTheme.chrome)
-                    .frame(width: 18, height: 18)
+                ZStack {
+                    Circle()
+                        .fill(SpotRelayTheme.chrome)
+                        .frame(width: 18, height: 18)
 
-                Image(systemName: "car.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white, SpotRelayTheme.success)
+                    Image(systemName: "car.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.white, SpotRelayTheme.success)
+                }
             }
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(SpotRelayTheme.strongGlassTint)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+                    )
+            )
             .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
+
+            TrianglePointer()
+                .fill(SpotRelayTheme.strongGlassTint)
+                .frame(width: 12, height: 16)
+                .overlay(
+                    TrianglePointer()
+                        .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+                )
+                .offset(y: -2)
         }
+    }
+}
+
+private struct SelectedParkedHistoryPinView: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                Text(L10n.tr("Selected"))
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(SpotRelayTheme.chrome, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.primary)
+
+                ZStack {
+                    Circle()
+                        .fill(SpotRelayTheme.chrome)
+                        .frame(width: 18, height: 18)
+
+                    Image(systemName: "mappin.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.white, SpotRelayTheme.primary)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(SpotRelayTheme.strongGlassTint)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+                    )
+            )
+            .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
+
+            TrianglePointer()
+                .fill(SpotRelayTheme.strongGlassTint)
+                .frame(width: 12, height: 16)
+                .overlay(
+                    TrianglePointer()
+                        .stroke(SpotRelayTheme.softStroke, lineWidth: 1)
+                )
+                .offset(y: -2)
+        }
+    }
+}
+
+private struct TrianglePointer: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -1501,11 +1625,14 @@ private struct ParkedLocationDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var spotStore: SpotStore
     @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
+    @EnvironmentObject private var smartParkingStore: SmartParkingStore
 
     let initialReminder: ParkingReminderStore.Reminder
+    let onSelectReminder: (ParkingReminderStore.Reminder) -> Void
 
     @State private var localAlert: HomeViewAlert?
     @State private var isHistoryExpanded = false
+    @State private var isShowingParkingLogShareSheet = false
 
     private var reminder: ParkingReminderStore.Reminder {
         parkingReminderStore.latestRememberedParkedLocation ?? initialReminder
@@ -1544,6 +1671,7 @@ private struct ParkedLocationDetailView: View {
                     directionsPanel
                     historyPanel
                     controlsPanel
+                    parkingDebugLogPanel
                 }
                 .padding(20)
             }
@@ -1563,6 +1691,9 @@ private struct ParkedLocationDetailView: View {
                     message: Text(alert.message),
                     dismissButton: .default(Text("OK"))
                 )
+            }
+            .sheet(isPresented: $isShowingParkingLogShareSheet) {
+                ActivityView(activityItems: [smartParkingStore.parkingLogFileURL])
             }
         }
     }
@@ -1813,6 +1944,83 @@ private struct ParkedLocationDetailView: View {
         )
     }
 
+    private var parkingDebugLogPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Parking debug log")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+
+            Text("Share or copy the temp log that records motion, vehicle signals, GPS updates, and the final parking decision sequence.")
+                .font(.subheadline)
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(smartParkingStore.parkingLogFilePath)
+                .font(.caption.monospaced())
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(SpotRelayTheme.badgeFill.opacity(0.7), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            HStack(spacing: 12) {
+                Button {
+                    UIPasteboard.general.string = smartParkingStore.parkingLogFilePath
+                    localAlert = HomeViewAlert(
+                        title: L10n.tr("Copied log path"),
+                        message: L10n.tr("The parking debug log path is now on your clipboard.")
+                    )
+                } label: {
+                    parkedActionButton(
+                        title: "Copy Path",
+                        icon: "doc.on.doc.fill",
+                        color: SpotRelayTheme.primary
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    isShowingParkingLogShareSheet = true
+                } label: {
+                    parkedActionButton(
+                        title: "Share Log",
+                        icon: "square.and.arrow.up.fill",
+                        color: SpotRelayTheme.success
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button(role: .destructive) {
+                smartParkingStore.clearParkingLog()
+                localAlert = HomeViewAlert(
+                    title: L10n.tr("Cleared log"),
+                    message: L10n.tr("The parking debug log was reset for your next drive test.")
+                )
+            } label: {
+                HStack {
+                    Image(systemName: "trash.fill")
+                    Text("Clear Log")
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .foregroundStyle(SpotRelayTheme.warning)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
     private func badge(text: String) -> some View {
         Text(text)
             .font(.caption.weight(.bold))
@@ -1823,40 +2031,50 @@ private struct ParkedLocationDetailView: View {
     }
 
     private func historyRow(reminder: ParkingReminderStore.Reminder, isCurrent: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill((isCurrent ? SpotRelayTheme.success : SpotRelayTheme.badgeFill).opacity(0.18))
-                    .frame(width: 38, height: 38)
+        Button {
+            onSelectReminder(reminder)
+            dismiss()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill((isCurrent ? SpotRelayTheme.success : SpotRelayTheme.badgeFill).opacity(0.18))
+                        .frame(width: 38, height: 38)
 
-                Image(systemName: isCurrent ? "car.circle.fill" : "clock.arrow.circlepath")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isCurrent ? SpotRelayTheme.success : SpotRelayTheme.primary)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    Text(reminder.areaLabel ?? "Saved parking spot")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(SpotRelayTheme.textPrimary)
-
-                    if isCurrent {
-                        badge(text: "Current")
-                    }
+                    Image(systemName: isCurrent ? "car.circle.fill" : "clock.arrow.circlepath")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(isCurrent ? SpotRelayTheme.success : SpotRelayTheme.primary)
                 }
 
-                Text(reminder.createdAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(reminder.areaLabel ?? "Saved parking spot")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                Text(reminder.areaSummary)
-                    .font(.caption)
-                    .foregroundStyle(SpotRelayTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                        if isCurrent {
+                            badge(text: "Current")
+                        }
+                    }
+
+                    Text(reminder.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+
+                    Text(reminder.areaSummary)
+                        .font(.caption)
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "location.viewfinder")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.primary)
             }
-
-            Spacer(minLength: 0)
         }
+        .buttonStyle(.plain)
     }
 
     private func detailRow(icon: String, title: String, value: String, subtitle: String) -> some View {
@@ -1994,6 +2212,16 @@ private struct ParkedLocationDetailView: View {
         components.queryItems = queryItems
         return components.url!
     }
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 private struct SpotPinView: View {

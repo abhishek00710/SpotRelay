@@ -110,6 +110,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let parkedLocationHistoryLimit = 10
     nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 25
     nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
+    nonisolated private static let nudgedSessionDuplicateDistanceMeters: CLLocationDistance = 35
+    nonisolated private static let nudgedSessionDuplicateTimeWindow: TimeInterval = 12 * 60 * 60
 
     @Published private(set) var activeReminder: Reminder?
     @Published private(set) var savedParkedLocation: Reminder?
@@ -119,11 +121,13 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private let center: UNUserNotificationCenter
     private let defaults: UserDefaults
     private let locationManager: CLLocationManager
+    private var lastNudgedReminder: Reminder?
 
     private enum Keys {
         static let activeReminder = "parkingReminder.active"
         static let savedParkedLocation = "parkingReminder.savedLocation"
         static let parkedLocationHistory = "parkingReminder.history"
+        static let lastNudgedReminder = "parkingReminder.lastNudgedReminder"
         static let hasExitedRegion = "parkingReminder.hasExitedRegion"
         static let debugState = "parkingReminder.debugState"
         nonisolated static let regionIdentifier = "parkingReminder.returnToCar.region"
@@ -141,6 +145,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         self.activeReminder = Self.loadReminder(from: defaults, key: Keys.activeReminder)
         self.savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
         self.parkedLocationHistory = Self.loadReminderHistory(from: defaults)
+        self.lastNudgedReminder = Self.loadReminder(from: defaults, key: Keys.lastNudgedReminder)
         self.debugState = Self.loadDebugState(from: defaults)
             ?? Self.derivedDebugState(
                 activeReminder: Self.loadReminder(from: defaults, key: Keys.activeReminder),
@@ -266,6 +271,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         activeReminder = Self.loadReminder(from: defaults, key: Keys.activeReminder)
         savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
         parkedLocationHistory = Self.loadReminderHistory(from: defaults)
+        lastNudgedReminder = Self.loadReminder(from: defaults, key: Keys.lastNudgedReminder)
         normalizeReminderRadiiIfNeeded()
         removeExpiredSavedLocationIfNeeded()
         await restoreMonitoringIfNeeded()
@@ -372,6 +378,11 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private func handleRegionEntry(allowWithoutRecordedExit: Bool = false) async {
         guard let reminder = activeReminder else { return }
         guard hasExitedRegion || allowWithoutRecordedExit else { return }
+        guard !hasAlreadyNudgedForSameSession(reminder) else {
+            updateDebugState(.notificationScheduled)
+            clearActiveReminderOnly(preservingNotification: true)
+            return
+        }
 
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized ||
@@ -403,6 +414,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
         do {
             try await center.add(request)
+            persist(reminder, key: Keys.lastNudgedReminder)
+            lastNudgedReminder = reminder
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
         } catch {
@@ -523,6 +536,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         let trimmed = areaLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != "Nearby" else { return nil }
         return trimmed
+    }
+
+    private func hasAlreadyNudgedForSameSession(_ reminder: Reminder) -> Bool {
+        guard let lastNudgedReminder else { return false }
+        return lastNudgedReminder.representsSameParkingSession(
+            as: reminder,
+            distanceThreshold: Self.nudgedSessionDuplicateDistanceMeters,
+            timeThreshold: Self.nudgedSessionDuplicateTimeWindow
+        )
     }
 }
 

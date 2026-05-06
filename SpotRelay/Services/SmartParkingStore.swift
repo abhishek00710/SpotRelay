@@ -76,6 +76,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let evidenceSummary: String?
         let locationAccuracyMeters: Double?
         let locationSource: ParkingLocationSource?
+        let winningSource: WinningSource?
 
         var confidenceLevel: ConfidenceLevel? {
             guard let confidenceScore else { return nil }
@@ -90,6 +91,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let detectedAt: Date
         let usedVehicleSignal: Bool
         let parkingTransitionDate: Date
+        let winningSource: WinningSource?
     }
 
     enum ParkingLocationSource: String, Codable, Equatable {
@@ -117,6 +119,44 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 return L10n.tr("visit settled fix")
             case .currentBlueDotFix:
                 return L10n.tr("current blue dot fix")
+            }
+        }
+    }
+
+    enum WinningSource: String, Codable, Equatable {
+        case carPlay
+        case bluetooth
+        case dwell
+        case disconnect
+        case visit
+
+        var badgeTitle: String {
+            switch self {
+            case .carPlay:
+                return L10n.tr("CarPlay won")
+            case .bluetooth:
+                return L10n.tr("Bluetooth won")
+            case .dwell:
+                return L10n.tr("Dwell won")
+            case .disconnect:
+                return L10n.tr("Disconnect won")
+            case .visit:
+                return L10n.tr("Visit won")
+            }
+        }
+
+        var summaryLabel: String {
+            switch self {
+            case .carPlay:
+                return L10n.tr("CarPlay was the strongest vehicle-session signal.")
+            case .bluetooth:
+                return L10n.tr("Bluetooth evidence was the strongest vehicle-session signal.")
+            case .dwell:
+                return L10n.tr("The final low-speed dwell cluster won.")
+            case .disconnect:
+                return L10n.tr("The disconnect moment decided the save.")
+            case .visit:
+                return L10n.tr("The arrival visit settle decided the save.")
             }
         }
     }
@@ -205,6 +245,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private var recentBluetoothVehicleSignal: VehicleSignalRecord?
     private var knownVehiclePeripheralNames = Set<String>()
     private var bluetoothScanStopTask: Task<Void, Never>?
+    private let parkingSequenceLogger = ParkingSequenceLogger()
 
     private enum Keys {
         static let isEnabled = "smartParking.enabled"
@@ -263,6 +304,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         bluetoothManager = CBCentralManager(delegate: self, queue: nil, options: [
             CBCentralManagerOptionShowPowerAlertKey: false
         ])
+        parkingSequenceLogger.append("SmartParkingStore init: enabled=\(isEnabled), status=\(locationAuthorizationStatus.rawValue)")
 
         activeReminderCancellable = parkingReminderStore.$activeReminder
             .receive(on: DispatchQueue.main)
@@ -350,9 +392,31 @@ final class SmartParkingStore: NSObject, ObservableObject {
         lastInferenceAssessment?.evidenceSummary
     }
 
+    var winningSourceBadgeTitle: String? {
+        lastAutoArmRecord?.winningSource?.badgeTitle
+    }
+
+    var winningSourceSummary: String? {
+        lastAutoArmRecord?.winningSource?.summaryLabel
+    }
+
+    var parkingLogFilePath: String {
+        parkingSequenceLogger.fileURL.path
+    }
+
+    var parkingLogFileURL: URL {
+        parkingSequenceLogger.fileURL
+    }
+
+    func clearParkingLog() {
+        parkingSequenceLogger.clear()
+        parkingSequenceLogger.append("Parking debug log cleared from app")
+    }
+
     func enable() async {
         defaults.set(true, forKey: Keys.isEnabled)
         isEnabled = true
+        parkingSequenceLogger.append("Enable requested")
 
         if locationAuthorizationStatus == .notDetermined {
             locationManager.requestWhenInUseAuthorization()
@@ -373,6 +437,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     func disable() {
         defaults.set(false, forKey: Keys.isEnabled)
         isEnabled = false
+        parkingSequenceLogger.append("Disable requested")
         locationManager.stopMonitoringVisits()
         locationManager.stopMonitoringSignificantLocationChanges()
         locationManager.stopUpdatingLocation()
@@ -441,11 +506,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         guard visit.horizontalAccuracy >= 0 else { return }
         guard visit.arrivalDate != .distantPast else { return }
+        parkingSequenceLogger.append("Visit received: lat=\(visit.coordinate.latitude), lon=\(visit.coordinate.longitude), accuracy=\(Int(visit.horizontalAccuracy.rounded()))m")
         if let event = parkingCaptureEngine.ingest(visit: visit) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Visit produced capture event: source=\(event.source.rawValue), confidence=\(event.confidenceScore), evidence=\(event.evidenceSummary)")
             await processParkingCaptureEvent(event)
         } else {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Visit ingested without save: \(parkingCaptureSnapshot.lastReason)")
         }
     }
 
@@ -456,6 +524,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             recentAutomotiveActivityAt = activity.startDate
             locationManager.startUpdatingLocation()
             startBluetoothVehicleScanIfHelpful()
+            parkingSequenceLogger.append("Motion activity automotive: confidence=\(activity.confidence.rawValue), startedAt=\(activity.startDate.timeIntervalSince1970)")
             await retireSavedParkedSpotIfUserIsDriving(
                 hasAutomotiveSignal: true,
                 latestLocation: locationManager.location
@@ -463,15 +532,18 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
         if let event = parkingCaptureEngine.ingest(activity: activity) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Motion produced capture event: source=\(event.source.rawValue), confidence=\(event.confidenceScore), evidence=\(event.evidenceSummary)")
             await processParkingCaptureEvent(event)
         } else {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Motion ingested without save: \(parkingCaptureSnapshot.lastReason)")
         }
     }
 
     private func handleLocationUpdates(_ locations: [CLLocation]) async {
         guard isEnabled else { return }
         if let latestLocation = locations.last {
+            parkingSequenceLogger.append("Location update: count=\(locations.count), lat=\(latestLocation.coordinate.latitude), lon=\(latestLocation.coordinate.longitude), accuracy=\(Int(latestLocation.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", max(latestLocation.speed, 0)))")
             await retireSavedParkedSpotIfUserIsDriving(
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
@@ -479,9 +551,11 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
         if let event = parkingCaptureEngine.ingest(locations: locations) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Location dwell produced capture event: source=\(event.source.rawValue), confidence=\(event.confidenceScore), evidence=\(event.evidenceSummary)")
             await processParkingCaptureEvent(event)
         } else {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Location ingested without save: \(parkingCaptureSnapshot.lastReason)")
         }
     }
 
@@ -502,6 +576,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         if hasAutomotiveSignal, let latestLocation {
             let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
             if distanceFromSavedSpot >= Self.resumedDrivingMinimumDistanceFromSavedSpot {
+                parkingSequenceLogger.append("Retiring saved parked spot: automotive signal resumed, distance=\(Int(distanceFromSavedSpot.rounded()))m")
                 await parkingReminderStore.retireCurrentParkedSpotForDriving()
                 return
             }
@@ -517,12 +592,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
         guard distanceFromSavedSpot >= distanceThreshold else { return }
 
+        parkingSequenceLogger.append("Retiring saved parked spot: speed resumed at \(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
         await parkingReminderStore.retireCurrentParkedSpotForDriving()
     }
 
     private func processParkingCaptureEvent(_ event: ParkingCaptureEvent) async {
         guard parkingReminderStore.activeReminder == nil else { return }
         let locationDecision = trustedParkedLocation(for: event)
+        let winningSource = winningSource(for: event)
         let coordinate = locationDecision.location.coordinate
         guard !isLikelyDuplicateArm(at: coordinate, comparedTo: lastAutoArmRecord) else { return }
 
@@ -540,10 +617,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
             evidenceSummary: enrichedEvidence,
             detectedAt: event.parkedAt,
             usedVehicleSignal: event.evidence.contains("vehicle signal") || event.evidence.contains("vehicle disconnected"),
-            parkingTransitionDate: event.parkedAt
+            parkingTransitionDate: event.parkedAt,
+            winningSource: winningSource
         )
         persist(assessment)
         lastInferenceAssessment = assessment
+        parkingSequenceLogger.append(
+            "Capture event accepted: source=\(event.source.rawValue), winner=\(winningSource.rawValue), saveLat=\(coordinate.latitude), saveLon=\(coordinate.longitude), accuracy=\(Int(locationDecision.location.horizontalAccuracy.rounded()))m, confidence=\(event.confidenceScore), evidence=\(event.evidenceSummary), locationSource=\(locationDecision.source.rawValue)"
+        )
 
         do {
             try await parkingReminderStore.rememberParkedSpot(
@@ -559,12 +640,15 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 confidenceScore: event.confidenceScore,
                 evidenceSummary: enrichedEvidence,
                 locationAccuracyMeters: locationDecision.location.horizontalAccuracy,
-                locationSource: source
+                locationSource: source,
+                winningSource: winningSource
             )
             persist(record)
             lastAutoArmRecord = record
             refreshStatus()
+            parkingSequenceLogger.append("Parked spot saved successfully near \(areaLabel ?? "unknown area")")
         } catch {
+            parkingSequenceLogger.append("Parked spot save failed: \(error.localizedDescription)")
             #if DEBUG
             print("SpotRelay parking capture save failed:", error.localizedDescription)
             #endif
@@ -614,6 +698,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         #if DEBUG
         print("SpotRelay parking capture corrected to blue dot by \(Int(distance.rounded()))m")
         #endif
+        parkingSequenceLogger.append("Corrected parked coordinate to current blue dot by \(Int(distance.rounded()))m")
         return (latestLocation, .currentBlueDotFix)
     }
 
@@ -635,6 +720,26 @@ final class SmartParkingStore: NSObject, ObservableObject {
             .components(separatedBy: " + ")
             .map(L10n.tr)
             .joined(separator: " + ")
+    }
+
+    private func winningSource(for event: ParkingCaptureEvent) -> WinningSource {
+        if event.evidence.contains("vehicle-signal:carplay") {
+            return .carPlay
+        }
+
+        if event.evidence.contains("vehicle-signal:corebluetooth")
+            || event.evidence.contains("vehicle-signal:bluetooth-audio") {
+            return .bluetooth
+        }
+
+        switch event.source {
+        case .vehicleDisconnect:
+            return .disconnect
+        case .visitSettled:
+            return .visit
+        case .motionSettled, .locationDwell:
+            return .dwell
+        }
     }
 
     private func recentMotionActivities(lookback: TimeInterval) async throws -> [CMMotionActivity] {
@@ -689,6 +794,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         case .newDeviceAvailable, .routeConfigurationChange, .override, .wakeFromSleep:
             refreshVehicleConnectionEvidence()
             if let record = currentVehicleSignalRecord() {
+                parkingSequenceLogger.append("Audio route connected: \(record.source.rawValue) \(record.routeName ?? "")")
                 parkingCaptureEngine.vehicleConnected(summary: record.source.captureToken)
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                 locationManager.startUpdatingLocation()
@@ -697,6 +803,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         case .oldDeviceUnavailable:
             let previousOutputs = (userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription)?.outputs ?? []
             if let disconnectedRecord = vehicleSignalRecord(for: previousOutputs) {
+                parkingSequenceLogger.append("Audio route disconnected: \(disconnectedRecord.source.rawValue) \(disconnectedRecord.routeName ?? "")")
                 if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
                     parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                     Task {
@@ -717,6 +824,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let nextSignals = currentActiveVehicleSignals()
         isCarPlaySignalActive = nextSignals.contains(.carPlay)
         applyVehicleSignalTransitions(nextSignals)
+        parkingSequenceLogger.append("Vehicle evidence refresh: active=\(nextSignals.map(\.rawValue).sorted().joined(separator: ","))")
 
         if let strongestRecord = strongestVehicleSignalRecord(from: nextSignals) {
             recentVehicleSignal = strongestRecord
@@ -776,6 +884,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let added = nextSignals.subtracting(activeVehicleSignals)
 
         for source in removed.sorted(by: { $0.priority > $1.priority }) {
+            parkingSequenceLogger.append("Vehicle signal removed: \(source.rawValue)")
             if let event = parkingCaptureEngine.vehicleDisconnected(summary: source.captureToken) {
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                 Task {
@@ -787,6 +896,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         for source in added.sorted(by: { $0.priority > $1.priority }) {
+            parkingSequenceLogger.append("Vehicle signal added: \(source.rawValue)")
             parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
         }
@@ -869,6 +979,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             detectedAt: .now,
             routeName: name
         )
+        parkingSequenceLogger.append("Bluetooth vehicle candidate discovered: \(name)")
         refreshVehicleConnectionEvidence()
     }
 
@@ -990,5 +1101,40 @@ extension SmartParkingStore: CBCentralManagerDelegate {
         Task { @MainActor [weak self] in
             self?.handleDiscoveredBluetoothPeripheral(peripheral)
         }
+    }
+}
+
+private final class ParkingSequenceLogger {
+    let fileURL: URL
+    private let formatter: ISO8601DateFormatter
+
+    init(fileName: String = "SpotRelayParkingDebug.log") {
+        self.fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        self.formatter = ISO8601DateFormatter()
+        self.formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        ensureLogFileExists()
+    }
+
+    func append(_ message: String) {
+        let line = "[\(formatter.string(from: .now))] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+
+        do {
+            let handle = try FileHandle(forWritingTo: fileURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    func clear() {
+        try? Data().write(to: fileURL, options: .atomic)
+    }
+
+    private func ensureLogFileExists() {
+        guard !FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        try? Data().write(to: fileURL, options: .atomic)
     }
 }
