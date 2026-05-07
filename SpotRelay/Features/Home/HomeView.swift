@@ -21,6 +21,8 @@ struct HomeView: View {
     @State private var editingParkedCoordinate: CLLocationCoordinate2D?
     @State private var editingMapRegion: MKCoordinateRegion?
     @State private var lastObservedMapRegion: MKCoordinateRegion?
+    @State private var lastObservedMapCamera: MapCamera?
+    @State private var mapHeadingDegrees: CLLocationDirection = 0
     @State private var parkingReminderAlert: HomeViewAlert?
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
@@ -114,10 +116,12 @@ struct HomeView: View {
             } else {
                 SizedMap(position: $cameraPosition, onMapCameraChange: { context in
                     lastObservedMapRegion = context.region
+                    lastObservedMapCamera = context.camera
+                    mapHeadingDegrees = context.camera.heading
                 }) {
                     UserAnnotation()
 
-                    if let parkedLocation = parkingReminderStore.savedParkedLocation {
+                    if let parkedLocation = parkingReminderStore.latestRememberedParkedLocation {
                         Annotation("You parked here", coordinate: parkedLocation.coordinate) {
                             Button {
                                 beginParkedPinEditing(using: parkedLocation)
@@ -129,7 +133,7 @@ struct HomeView: View {
                     }
 
                     if let selectedParkedHistoryReminder,
-                       selectedParkedHistoryReminder != parkingReminderStore.savedParkedLocation {
+                       selectedParkedHistoryReminder != parkingReminderStore.latestRememberedParkedLocation {
                         Annotation("Selected parked spot", coordinate: selectedParkedHistoryReminder.coordinate) {
                             SelectedParkedHistoryPinView()
                         }
@@ -187,6 +191,16 @@ struct HomeView: View {
                     }
                 }
 
+                if shouldShowNorthUpButton {
+                    HStack {
+                        Spacer()
+                        MapNorthUpButton(headingDegrees: normalizedMapHeadingDegrees) {
+                            orientMapNorth()
+                        }
+                        .transition(.scale(scale: 0.88).combined(with: .opacity))
+                    }
+                }
+
                 if shouldShowSmartParkingButton {
                     HStack {
                         Spacer()
@@ -195,6 +209,7 @@ struct HomeView: View {
                 }
             }
             .padding(.horizontal, 4)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowNorthUpButton)
             Spacer()
             nearbySheetContainer
         }
@@ -352,6 +367,20 @@ struct HomeView: View {
         case .monitoring, .unsupported:
             return false
         }
+    }
+
+    private var shouldShowNorthUpButton: Bool {
+        !isEditingParkedPinOnMap && mapHeadingDeltaFromNorth > 4
+    }
+
+    private var normalizedMapHeadingDegrees: CLLocationDirection {
+        let heading = mapHeadingDegrees.truncatingRemainder(dividingBy: 360)
+        return heading >= 0 ? heading : heading + 360
+    }
+
+    private var mapHeadingDeltaFromNorth: CLLocationDirection {
+        let heading = normalizedMapHeadingDegrees
+        return min(heading, 360 - heading)
     }
 
     private var headerCard: some View {
@@ -728,6 +757,7 @@ struct HomeView: View {
     private func focusMap(animated: Bool) {
         guard let coordinate = spotStore.userCoordinate else {
             setCameraPosition(.automatic, animated: animated)
+            mapHeadingDegrees = 0
             return
         }
         setCameraPosition(
@@ -739,6 +769,7 @@ struct HomeView: View {
             ),
             animated: animated
         )
+        mapHeadingDegrees = 0
     }
 
     private var sheetSubtitle: String {
@@ -893,6 +924,7 @@ struct HomeView: View {
             ),
             animated: true
         )
+        mapHeadingDegrees = 0
         showParkedLocationToast(for: reminder)
     }
 
@@ -908,6 +940,7 @@ struct HomeView: View {
             lastObservedMapRegion = editingMapRegion
             pendingRecenterOnLocationUpdate = false
             setCameraPosition(.region(editingMapRegion), animated: false)
+            mapHeadingDegrees = 0
         }
         isEditingParkedPinOnMap = false
         editingParkedCoordinate = nil
@@ -942,6 +975,7 @@ struct HomeView: View {
                 lastObservedMapRegion = editingMapRegion
                 pendingRecenterOnLocationUpdate = false
                 setCameraPosition(.region(editingMapRegion), animated: false)
+                mapHeadingDegrees = 0
             }
             cancelParkedPinEditing()
         } catch {
@@ -975,6 +1009,25 @@ struct HomeView: View {
         } else {
             cameraPosition = position
         }
+    }
+
+    private func orientMapNorth() {
+        if let camera = lastObservedMapCamera {
+            setCameraPosition(
+                .camera(
+                    MapCamera(
+                        centerCoordinate: camera.centerCoordinate,
+                        distance: camera.distance,
+                        heading: 0,
+                        pitch: camera.pitch
+                    )
+                ),
+                animated: true
+            )
+        } else if let lastObservedMapRegion {
+            setCameraPosition(.region(lastObservedMapRegion), animated: true)
+        }
+        mapHeadingDegrees = 0
     }
 
     private func localizedAreaLabel(_ label: String) -> String {
@@ -1427,13 +1480,26 @@ private struct EditableParkedMapView: UIViewRepresentable {
     }
 }
 
-private final class HostedParkedAnnotationView: MKAnnotationView {
-    private let hostedView = UIHostingController(rootView: ParkedCarPinView()).view!
+private final class HostedParkedAnnotationView: MKAnnotationView, UIGestureRecognizerDelegate {
+    private static let duplicateGestureSuppressionInterval: TimeInterval = 0.18
+
+    private var waveTrigger = 0
+    private var selectionBubbleTrigger = 0
+    private var hasPlayedInitialSelectionBubble = false
+    private var lastSelectionBubbleTriggerDate = Date.distantPast
+    private var lastWaveTriggerDate = Date.distantPast
+    private let hostingController = UIHostingController(
+        rootView: ParkedCarPinView(isEditable: true, waveTrigger: 0, selectionBubbleTrigger: 0)
+    )
+
+    private var hostedView: UIView {
+        hostingController.view
+    }
 
     override init(annotation: (any MKAnnotation)?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         collisionMode = .rectangle
-        centerOffset = CGPoint(x: 0, y: -26)
+        centerOffset = CGPoint(x: 0, y: -56)
         backgroundColor = .clear
         canShowCallout = false
         hostedView.backgroundColor = .clear
@@ -1445,6 +1511,24 @@ private final class HostedParkedAnnotationView: MKAnnotationView {
             hostedView.topAnchor.constraint(equalTo: topAnchor),
             hostedView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
+
+        let longPressRecognizer = UILongPressGestureRecognizer(
+            target: self,
+            action: #selector(handleLongPress(_:))
+        )
+        longPressRecognizer.minimumPressDuration = 0.38
+        longPressRecognizer.cancelsTouchesInView = false
+        longPressRecognizer.delegate = self
+        addGestureRecognizer(longPressRecognizer)
+
+        let tapRecognizer = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleTap(_:))
+        )
+        tapRecognizer.cancelsTouchesInView = false
+        tapRecognizer.delegate = self
+        tapRecognizer.require(toFail: longPressRecognizer)
+        addGestureRecognizer(tapRecognizer)
     }
 
     @available(*, unavailable)
@@ -1453,7 +1537,63 @@ private final class HostedParkedAnnotationView: MKAnnotationView {
     }
 
     func configureForCurrentAppearance() {
-        frame = CGRect(origin: .zero, size: CGSize(width: 86, height: 72))
+        frame = CGRect(origin: .zero, size: CGSize(width: 132, height: 150))
+        if !hasPlayedInitialSelectionBubble {
+            hasPlayedInitialSelectionBubble = true
+            selectionBubbleTrigger += 1
+        }
+        updateRootView()
+    }
+
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        triggerSelectionBubble()
+    }
+
+    @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        triggerCarSignalWave()
+    }
+
+    private func triggerSelectionBubble() {
+        guard shouldAcceptGesture(lastTriggerDate: &lastSelectionBubbleTriggerDate) else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
+        selectionBubbleTrigger += 1
+        updateRootView()
+    }
+
+    private func triggerCarSignalWave() {
+        guard shouldAcceptGesture(lastTriggerDate: &lastWaveTriggerDate) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        waveTrigger += 1
+        updateRootView()
+    }
+
+    private func shouldAcceptGesture(lastTriggerDate: inout Date) -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(lastTriggerDate) > Self.duplicateGestureSuppressionInterval else {
+            return false
+        }
+        lastTriggerDate = now
+        return true
+    }
+
+    private func updateRootView() {
+        hostingController.rootView = ParkedCarPinView(
+            isEditable: true,
+            waveTrigger: waveTrigger,
+            selectionBubbleTrigger: selectionBubbleTrigger,
+            onPinTap: { [weak self] in
+                self?.triggerSelectionBubble()
+            },
+            onPinLongPress: { [weak self] in
+                self?.triggerCarSignalWave()
+            }
+        )
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
     }
 }
 
@@ -1518,18 +1658,249 @@ private struct HomeViewAlert: Identifiable {
     let message: String
 }
 
-private struct ParkedCarPinView: View {
+private struct MapNorthUpButton: View {
+    let headingDegrees: CLLocationDirection
+    let action: () -> Void
+
     var body: some View {
+        Button(action: action) {
+            Image(systemName: "safari.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(SpotRelayTheme.textPrimary)
+                .rotationEffect(.degrees(-headingDegrees))
+                .frame(width: 46, height: 46)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 18,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+        .accessibilityLabel("Point map north")
+    }
+}
+
+private struct ParkedCarPinView: View {
+    var isEditable = false
+    var waveTrigger = 0
+    var selectionBubbleTrigger = 0
+    var onPinTap: (() -> Void)?
+    var onPinLongPress: (() -> Void)?
+
+    @State private var isBubbleVisible = false
+    @State private var isSelectionBubbleVisible = false
+    @State private var waveScale: CGFloat = 0.75
+    @State private var waveOpacity = 0.0
+    @State private var bubbleLift: CGFloat = 10
+    @State private var selectionBubbleLift: CGFloat = 8
+    @State private var selectionBubbleScale: CGFloat = 0.84
+    @State private var carTilt = -5.0
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if isEditable {
+                parkedSelectionBubble
+                    .opacity(isSelectionBubbleVisible ? 1 : 0)
+                    .scaleEffect(selectionBubbleScale, anchor: .bottom)
+                    .offset(y: isSelectionBubbleVisible ? -48 + selectionBubbleLift : -30)
+                    .allowsHitTesting(false)
+            }
+
+            if isEditable {
+                carSignalBubble
+                    .opacity(isBubbleVisible ? 1 : 0)
+                    .scaleEffect(isBubbleVisible ? 1 : 0.72, anchor: .bottom)
+                    .offset(y: isBubbleVisible ? -48 + bubbleLift : -28)
+                    .allowsHitTesting(false)
+            }
+
+            pinCore
+        }
+        .frame(width: isEditable ? 132 : 42, height: isEditable ? 150 : 42, alignment: .bottom)
+        .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
+        .onChange(of: waveTrigger) { _, newValue in
+            guard newValue > 0 else { return }
+            playCarSignalAnimation()
+        }
+        .onChange(of: selectionBubbleTrigger) { _, newValue in
+            guard newValue > 0 else { return }
+            playSelectionBubbleAnimation()
+        }
+    }
+
+    private var pinCore: some View {
         ZStack {
             Circle()
                 .fill(SpotRelayTheme.chrome)
                 .frame(width: 18, height: 18)
 
+            pinImage
+        }
+    }
+
+    @ViewBuilder
+    private var pinImage: some View {
+        if isEditable {
+            Image(systemName: "car.circle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.white, SpotRelayTheme.success)
+                .contentShape(Circle())
+                .onTapGesture {
+                    onPinTap?()
+                }
+                .onLongPressGesture(minimumDuration: 0.38) {
+                    onPinLongPress?()
+                }
+        } else {
             Image(systemName: "car.circle.fill")
                 .font(.system(size: 30))
                 .foregroundStyle(.white, SpotRelayTheme.success)
         }
-        .shadow(color: SpotRelayTheme.shadow, radius: 10, y: 6)
+    }
+
+    private var parkedSelectionBubble: some View {
+        VStack(spacing: -2) {
+            ZStack {
+                Circle()
+                    .fill(SpotRelayTheme.chrome.opacity(0.96))
+                    .frame(width: 70, height: 70)
+                    .overlay(
+                        Circle()
+                            .stroke(.white.opacity(0.88), lineWidth: 3)
+                    )
+
+                Circle()
+                    .fill(SpotRelayTheme.textSecondary.opacity(0.18))
+                    .frame(width: 48, height: 48)
+
+                Image(systemName: "car.fill")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(SpotRelayTheme.success)
+            }
+
+            MapBubbleTail()
+                .fill(SpotRelayTheme.chrome.opacity(0.96))
+                .frame(width: 24, height: 14)
+                .overlay(
+                    MapBubbleTail()
+                        .stroke(.white.opacity(0.62), lineWidth: 2)
+                )
+        }
+        .shadow(color: SpotRelayTheme.shadow.opacity(0.36), radius: 12, y: 8)
+    }
+
+    private var carSignalBubble: some View {
+        ZStack {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .stroke(
+                        SpotRelayTheme.success.opacity(0.34 - Double(index) * 0.08),
+                        lineWidth: 2
+                    )
+                    .frame(width: 42 + CGFloat(index * 14), height: 42 + CGFloat(index * 14))
+                    .scaleEffect(waveScale + CGFloat(index) * 0.06)
+                    .opacity(waveOpacity * (1 - Double(index) * 0.18))
+            }
+
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(SpotRelayTheme.strongGlassTint)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(SpotRelayTheme.glassStroke, lineWidth: 1)
+                )
+                .shadow(color: SpotRelayTheme.shadow.opacity(0.55), radius: 16, y: 10)
+
+            HStack(spacing: 8) {
+                Image(systemName: "car.fill")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .rotationEffect(.degrees(carTilt))
+                    .frame(width: 34, height: 34)
+                    .background(SpotRelayTheme.heroGradient, in: Circle())
+
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(SpotRelayTheme.success)
+                    .symbolEffect(.pulse, value: waveTrigger)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .frame(width: 94, height: 60)
+    }
+
+    private func playCarSignalAnimation() {
+        isSelectionBubbleVisible = false
+        isBubbleVisible = false
+        waveScale = 0.72
+        waveOpacity = 0
+        bubbleLift = 10
+        carTilt = -8
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.66)) {
+            isBubbleVisible = true
+            bubbleLift = 0
+            waveScale = 1.04
+            waveOpacity = 1
+            carTilt = 8
+        }
+
+        withAnimation(.easeInOut(duration: 0.18).repeatCount(3, autoreverses: true)) {
+            carTilt = -8
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+            withAnimation(.easeOut(duration: 0.62)) {
+                waveScale = 1.58
+                waveOpacity = 0
+                carTilt = 0
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
+            withAnimation(.easeIn(duration: 0.24)) {
+                isBubbleVisible = false
+                bubbleLift = -4
+            }
+        }
+    }
+
+    private func playSelectionBubbleAnimation() {
+        isBubbleVisible = false
+        isSelectionBubbleVisible = false
+        selectionBubbleLift = 8
+        selectionBubbleScale = 0.84
+
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.68)) {
+            isSelectionBubbleVisible = true
+            selectionBubbleLift = 0
+            selectionBubbleScale = 1
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeInOut(duration: 0.22)) {
+                isSelectionBubbleVisible = false
+                selectionBubbleLift = -3
+                selectionBubbleScale = 0.96
+            }
+        }
+    }
+}
+
+private struct MapBubbleTail: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.midX, y: rect.midY)
+        )
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -1569,6 +1940,7 @@ private struct ParkedLocationDetailView: View {
     let onSelectReminder: (ParkingReminderStore.Reminder) -> Void
 
     @State private var localAlert: HomeViewAlert?
+    @State private var isSavedDetailsExpanded = false
     @State private var isHistoryExpanded = false
     @State private var isShowingParkingLogShareSheet = false
 
@@ -1614,15 +1986,6 @@ private struct ParkedLocationDetailView: View {
                 .padding(20)
             }
             .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
-            .navigationTitle("You parked here")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
             .alert(item: $localAlert) { alert in
                 Alert(
                     title: Text(alert.title),
@@ -1679,39 +2042,69 @@ private struct ParkedLocationDetailView: View {
 
     private var detailPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Saved details")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(SpotRelayTheme.textPrimary)
+            VStack(alignment: .leading) {
+                HStack(spacing: 4) {
+                    Text("Saved details")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+                    Spacer()
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                            isSavedDetailsExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: isSavedDetailsExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.bold))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(SpotRelayTheme.badgeFill, in: Capsule())
+                        .foregroundStyle(SpotRelayTheme.badgeText)
+                    }
+                    .buttonStyle(.plain)
+                }
 
-            detailRow(
-                icon: "clock.fill",
-                title: "Saved",
-                value: L10n.format("Updated %@", savedRelativeText),
-                subtitle: savedAbsoluteText
-            )
+                Text(L10n.format("Updated %@. %@.", savedRelativeText, statusTitle))
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            detailRow(
-                icon: "parkingsign.circle.fill",
-                title: "Share point",
-                value: "This parked pin will be used first",
-                subtitle: "New leaving handoffs will publish from this saved car location."
-            )
+            if isSavedDetailsExpanded {
+                VStack(alignment: .leading, spacing: 14) {
+                    detailRow(
+                        icon: "clock.fill",
+                        title: "Saved",
+                        value: L10n.format("Updated %@", savedRelativeText),
+                        subtitle: savedAbsoluteText
+                    )
 
-            detailRow(
-                icon: "location.circle.fill",
-                title: "Reminder status",
-                value: statusTitle,
-                subtitle: reminder.areaSummary
-            )
+                    detailRow(
+                        icon: "parkingsign.circle.fill",
+                        title: "Share point",
+                        value: "This parked pin will be used first",
+                        subtitle: "New leaving handoffs will publish from this saved car location."
+                    )
 
-            HStack(spacing: 10) {
-                badge(text: L10n.format("%d m return radius", Int(reminder.radiusMeters)))
+                    detailRow(
+                        icon: "location.circle.fill",
+                        title: "Reminder status",
+                        value: statusTitle,
+                        subtitle: reminder.areaSummary
+                    )
 
-                if let userCoordinate = spotStore.userCoordinate {
-                    badge(text: reminder.coordinateDistanceText(from: userCoordinate))
+                    HStack(spacing: 10) {
+                        badge(text: L10n.format("%d m return radius", Int(reminder.radiusMeters)))
+
+                        if let userCoordinate = spotStore.userCoordinate {
+                            badge(text: reminder.coordinateDistanceText(from: userCoordinate))
+                        }
+                    }
                 }
             }
         }
+        .frame(maxWidth: .infinity)
         .padding(20)
         .glassPanel(
             cornerRadius: 28,
@@ -1770,39 +2163,35 @@ private struct ParkedLocationDetailView: View {
 
     private var historyPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading) {
+                HStack(spacing: 4) {
                     Text("Recent parked locations")
                         .font(.headline.weight(.bold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
-
-                    Text("SpotRelay remembers your latest parked spots so the next stop can replace the current pin without losing context.")
-                        .font(.subheadline)
-                        .foregroundStyle(SpotRelayTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                        isHistoryExpanded.toggle()
+                    Spacer()
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                            isHistoryExpanded.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.bold))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(SpotRelayTheme.badgeFill, in: Capsule())
+                        .foregroundStyle(SpotRelayTheme.badgeText)
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(isHistoryExpanded ? "Collapse" : "Expand")
-                            .font(.caption.weight(.bold))
-                        Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption.weight(.bold))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(SpotRelayTheme.badgeFill, in: Capsule())
-                    .foregroundStyle(SpotRelayTheme.badgeText)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+                
+                Text("SpotRelay remembers your latest parked spots so the next stop can replace the current pin without losing context.")
+                    .font(.subheadline)
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
+            
             if isHistoryExpanded {
                 VStack(spacing: 12) {
                     ForEach(Array(history.enumerated()), id: \.element.createdAt) { index, historyReminder in
@@ -1811,6 +2200,7 @@ private struct ParkedLocationDetailView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity)
         .padding(20)
         .glassPanel(
             cornerRadius: 28,
