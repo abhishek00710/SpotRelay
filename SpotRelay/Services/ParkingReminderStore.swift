@@ -106,6 +106,17 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
     }
 
+    enum VehicleConnectionReminderOutcome: Equatable {
+        case noActiveReminder
+        case waitingForExitOrAge
+        case waitingForUsableLocation
+        case outsideReturnDistance(distanceMeters: CLLocationDistance, allowedMeters: CLLocationDistance)
+        case alreadyNudged
+        case notificationsDisabled
+        case scheduled
+        case failed
+    }
+
     nonisolated static let defaultRadiusMeters: Double = 75
     nonisolated private static let fallbackExitDistanceMeters: Double = 90
     nonisolated private static let fallbackReturnDistanceMeters: Double = 45
@@ -240,6 +251,16 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         updateDebugState(.noReminder)
     }
 
+    @discardableResult
+    func noteMovedAwayFromParkedSpot() -> Bool {
+        guard activeReminder != nil else { return false }
+        guard !hasExitedRegion else { return false }
+
+        setHasExitedRegion(true)
+        updateDebugState(.exitedWaitingForReturn)
+        return true
+    }
+
     func seedTemporaryTestingParkedSpot(
         at coordinate: CLLocationCoordinate2D,
         areaLabel: String?,
@@ -311,13 +332,13 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     func handleVehicleConnectionNearParkedCar(
         sourceSummary: String,
         location: CLLocation?
-    ) async {
-        guard let reminder = activeReminder else { return }
+    ) async -> VehicleConnectionReminderOutcome {
+        guard let reminder = activeReminder else { return .noActiveReminder }
 
         let reminderAge = Date().timeIntervalSince(reminder.createdAt)
         guard hasExitedRegion || reminderAge >= Self.vehicleConnectionReturnWithoutExitMinimumAge else {
             updateDebugState(.armed)
-            return
+            return .waitingForExitOrAge
         }
 
         guard let latestLocation = location ?? locationManager.location,
@@ -325,17 +346,17 @@ final class ParkingReminderStore: NSObject, ObservableObject {
               latestLocation.horizontalAccuracy <= Self.vehicleConnectionLocationMaximumAccuracyMeters,
               abs(latestLocation.timestamp.timeIntervalSinceNow) <= Self.vehicleConnectionLocationMaximumAge else {
             updateDebugState(.nearCarWaitingForVehicleConnection)
-            return
+            return .waitingForUsableLocation
         }
 
         let returnDistance = reminder.distanceMeters(from: latestLocation.coordinate)
         let allowedDistance = max(Self.vehicleConnectionReturnDistanceMeters, reminder.radiusMeters + 20)
         guard returnDistance <= allowedDistance else {
             updateDebugState(.exitedWaitingForReturn)
-            return
+            return .outsideReturnDistance(distanceMeters: returnDistance, allowedMeters: allowedDistance)
         }
 
-        await scheduleReturnNotification(
+        return await scheduleReturnNotification(
             for: reminder,
             triggerSummary: sourceSummary
         )
@@ -432,11 +453,11 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     private func scheduleReturnNotification(
         for reminder: Reminder,
         triggerSummary: String
-    ) async {
+    ) async -> VehicleConnectionReminderOutcome {
         guard !hasAlreadyNudgedForSameSession(reminder) else {
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
-            return
+            return .alreadyNudged
         }
 
         let settings = await center.notificationSettings()
@@ -444,7 +465,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
               settings.authorizationStatus == .provisional ||
               settings.authorizationStatus == .ephemeral else {
             updateDebugState(.notificationsDisabled)
-            return
+            return .notificationsDisabled
         }
 
         let content = UNMutableNotificationContent()
@@ -474,10 +495,12 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             lastNudgedReminder = reminder
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
+            return .scheduled
         } catch {
             #if DEBUG
             print("SpotRelay parked reminder notification failed:", error.localizedDescription)
             #endif
+            return .failed
         }
     }
 

@@ -10,12 +10,23 @@ import FirebaseFirestore
 
 @MainActor
 final class PushNotificationStore: ObservableObject {
+    struct ParkingReminderTapRequest: Identifiable, Equatable {
+        let id: UUID
+        let receivedAt: Date
+
+        init(id: UUID = UUID(), receivedAt: Date = .now) {
+            self.id = id
+            self.receivedAt = receivedAt
+        }
+    }
+
     static let shared = PushNotificationStore()
 
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var fcmToken: String?
     @Published private(set) var apnsToken: String?
     @Published private(set) var lastRegistrationError: String?
+    @Published private(set) var parkingReminderTapRequest: ParkingReminderTapRequest?
 
     private let defaults: UserDefaults
     private let center: UNUserNotificationCenter
@@ -156,9 +167,18 @@ final class PushNotificationStore: ObservableObject {
     }
 
     func handleNotificationResponse(userInfo: [AnyHashable: Any]) {
+        if Self.isParkingReminderNotification(userInfo) {
+            parkingReminderTapRequest = ParkingReminderTapRequest()
+        }
+
         #if DEBUG
         print("SpotRelay notification response:", userInfo)
         #endif
+    }
+
+    func consumeParkingReminderTapRequest(_ request: ParkingReminderTapRequest) {
+        guard parkingReminderTapRequest?.id == request.id else { return }
+        parkingReminderTapRequest = nil
     }
 
     func handleRemoteMessage(userInfo: [AnyHashable: Any]) {
@@ -173,6 +193,10 @@ final class PushNotificationStore: ObservableObject {
                 continuation.resume(returning: settings)
             }
         }
+    }
+
+    private static func isParkingReminderNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+        userInfo["type"] as? String == "parking-reminder"
     }
 
     private func persistDeviceStateIfPossible() async {

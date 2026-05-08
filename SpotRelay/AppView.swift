@@ -15,6 +15,7 @@ struct AppView: View {
     @State private var selectedSpot: ParkingSpotSignal?
     @State private var showingActiveHandoff = false
     @State private var handoffPresentationTask: Task<Void, Never>?
+    @State private var parkingReminderPresentationTask: Task<Void, Never>?
     @State private var reviewPromptTask: Task<Void, Never>?
 
     private let minimumSuccessfulHandoffsBeforeReview = 2
@@ -111,12 +112,20 @@ struct AppView: View {
         .onChange(of: spotStore.reviewPromptRequest?.id) { _, _ in
             scheduleReviewPromptIfAppropriate()
         }
+        .onChange(of: pushNotificationStore.parkingReminderTapRequest?.id) { _, _ in
+            presentParkingReminderShareSheetIfNeeded()
+        }
+        .onChange(of: session.hasCompletedOnboarding) { _, completedOnboarding in
+            guard completedOnboarding else { return }
+            presentParkingReminderShareSheetIfNeeded()
+        }
         .task {
             spotStore.prepareLocationTracking(requestIfNeeded: false)
             await parkingReminderStore.refreshReminderState()
             smartParkingStore.refreshPermissions()
             await pushNotificationStore.refreshAuthorizationStatus()
             pushNotificationStore.registerForRemoteNotificationsIfAuthorized()
+            presentParkingReminderShareSheetIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
@@ -151,6 +160,23 @@ struct AppView: View {
             guard !Task.isCancelled else { return }
             guard spotStore.activeHandoff != nil, canPresentActiveHandoff else { return }
             showingActiveHandoff = true
+        }
+    }
+
+    private func presentParkingReminderShareSheetIfNeeded() {
+        guard let request = pushNotificationStore.parkingReminderTapRequest else { return }
+        guard session.hasCompletedOnboarding else { return }
+
+        pushNotificationStore.consumeParkingReminderTapRequest(request)
+        parkingReminderPresentationTask?.cancel()
+        parkingReminderPresentationTask = Task { @MainActor in
+            handoffPresentationTask?.cancel()
+            selectedSpot = nil
+            showingActiveHandoff = false
+
+            try? await Task.sleep(for: .milliseconds(160))
+            guard !Task.isCancelled else { return }
+            showingPostSpotFlow = true
         }
     }
 

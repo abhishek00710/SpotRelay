@@ -525,7 +525,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             locationManager.startUpdatingLocation()
             startBluetoothVehicleScanIfHelpful()
             parkingSequenceLogger.append("Motion activity automotive: confidence=\(activity.confidence.rawValue), startedAt=\(activity.startDate.timeIntervalSince1970)")
-            await retireSavedParkedSpotIfUserIsDriving(
+            observeSavedParkedSpotWhileUserMoves(
                 hasAutomotiveSignal: true,
                 latestLocation: locationManager.location
             )
@@ -544,7 +544,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         if let latestLocation = locations.last {
             parkingSequenceLogger.append("Location update: count=\(locations.count), lat=\(latestLocation.coordinate.latitude), lon=\(latestLocation.coordinate.longitude), accuracy=\(Int(latestLocation.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", max(latestLocation.speed, 0)))")
-            await retireSavedParkedSpotIfUserIsDriving(
+            observeSavedParkedSpotWhileUserMoves(
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
             )
@@ -560,10 +560,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
     }
 
-    private func retireSavedParkedSpotIfUserIsDriving(
+    private func observeSavedParkedSpotWhileUserMoves(
         hasAutomotiveSignal: Bool,
         latestLocation: CLLocation?
-    ) async {
+    ) {
         guard parkingReminderStore.hasRememberedParkedLocations,
               let reminder = parkingReminderStore.savedParkedLocation else {
             return
@@ -577,8 +577,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
         if hasAutomotiveSignal, let latestLocation {
             let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
             if distanceFromSavedSpot >= Self.resumedDrivingMinimumDistanceFromSavedSpot {
-                parkingSequenceLogger.append("Retiring saved parked spot: automotive signal resumed, distance=\(Int(distanceFromSavedSpot.rounded()))m")
-                await parkingReminderStore.retireCurrentParkedSpotForDriving()
+                if parkingReminderStore.noteMovedAwayFromParkedSpot() {
+                    parkingSequenceLogger.append("Parked reminder kept armed after leaving: automotive signal resumed, distance=\(Int(distanceFromSavedSpot.rounded()))m")
+                }
                 return
             }
         }
@@ -593,15 +594,28 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
         guard distanceFromSavedSpot >= distanceThreshold else { return }
 
-        parkingSequenceLogger.append("Retiring saved parked spot: speed resumed at \(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
-        await parkingReminderStore.retireCurrentParkedSpotForDriving()
+        if parkingReminderStore.noteMovedAwayFromParkedSpot() {
+            parkingSequenceLogger.append("Parked reminder kept armed after leaving: speed resumed at \(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
+        }
     }
 
     private func processParkingCaptureEvent(_ event: ParkingCaptureEvent) async {
-        guard parkingReminderStore.activeReminder == nil else { return }
         let locationDecision = trustedParkedLocation(for: event)
         let winningSource = winningSource(for: event)
         let coordinate = locationDecision.location.coordinate
+        if let activeReminder = parkingReminderStore.activeReminder {
+            let distanceFromActiveReminder = activeReminder.distanceMeters(from: coordinate)
+            let replacementDistance = max(
+                Self.duplicateArmDistanceMeters,
+                activeReminder.radiusMeters + 35
+            )
+            guard distanceFromActiveReminder >= replacementDistance else {
+                parkingSequenceLogger.append("Skipped save: active parked reminder already armed within \(Int(distanceFromActiveReminder.rounded()))m")
+                return
+            }
+
+            parkingSequenceLogger.append("Replacing active parked reminder: new parked capture is \(Int(distanceFromActiveReminder.rounded()))m from previous spot")
+        }
         guard !isLikelyDuplicateArm(at: coordinate, comparedTo: lastAutoArmRecord) else { return }
 
         let areaLabel = await reverseGeocodedAreaLabel(for: coordinate)
@@ -791,6 +805,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
             return
         }
 
+        let currentOutputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        parkingSequenceLogger.append("Audio route changed: reason=\(reason), current=\(audioRouteSummary(for: currentOutputs))")
+
         switch reason {
         case .newDeviceAvailable, .routeConfigurationChange, .override, .wakeFromSleep:
             refreshVehicleConnectionEvidence()
@@ -803,6 +820,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             }
         case .oldDeviceUnavailable:
             let previousOutputs = (userInfo[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription)?.outputs ?? []
+            parkingSequenceLogger.append("Audio previous route: \(audioRouteSummary(for: previousOutputs))")
             if let disconnectedRecord = vehicleSignalRecord(for: previousOutputs) {
                 parkingSequenceLogger.append("Audio route disconnected: \(disconnectedRecord.source.rawValue) \(disconnectedRecord.routeName ?? "")")
                 if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
@@ -901,11 +919,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
             parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             locationManager.startUpdatingLocation()
-            Task {
-                await parkingReminderStore.handleVehicleConnectionNearParkedCar(
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let outcome = await self.parkingReminderStore.handleVehicleConnectionNearParkedCar(
                     sourceSummary: source.summaryLabel,
-                    location: locationManager.location
+                    location: self.locationManager.location
                 )
+                self.parkingSequenceLogger.append("Vehicle connection reminder check: source=\(source.rawValue), outcome=\(self.vehicleConnectionReminderOutcomeSummary(outcome))")
             }
         }
 
@@ -917,10 +937,54 @@ final class SmartParkingStore: NSObject, ObservableObject {
             return
         }
 
-        await parkingReminderStore.handleVehicleConnectionNearParkedCar(
+        let outcome = await parkingReminderStore.handleVehicleConnectionNearParkedCar(
             sourceSummary: strongestVehicleSignal.summaryLabel,
             location: latestLocation
         )
+        if shouldLogVehicleConnectionReminderOutcomeFromLocation(outcome) {
+            parkingSequenceLogger.append("Vehicle connection reminder check: source=\(strongestVehicleSignal.rawValue), outcome=\(vehicleConnectionReminderOutcomeSummary(outcome))")
+        }
+    }
+
+    private func shouldLogVehicleConnectionReminderOutcomeFromLocation(_ outcome: ParkingReminderStore.VehicleConnectionReminderOutcome) -> Bool {
+        switch outcome {
+        case .alreadyNudged, .failed, .notificationsDisabled, .scheduled, .waitingForUsableLocation:
+            return true
+        case .noActiveReminder, .outsideReturnDistance, .waitingForExitOrAge:
+            return false
+        }
+    }
+
+    private func vehicleConnectionReminderOutcomeSummary(_ outcome: ParkingReminderStore.VehicleConnectionReminderOutcome) -> String {
+        switch outcome {
+        case .noActiveReminder:
+            return "no active parked reminder"
+        case .waitingForExitOrAge:
+            return "waiting for exit or reminder age"
+        case .waitingForUsableLocation:
+            return "waiting for usable location"
+        case let .outsideReturnDistance(distanceMeters, allowedMeters):
+            return "outside return distance: \(Int(distanceMeters.rounded()))m > \(Int(allowedMeters.rounded()))m"
+        case .alreadyNudged:
+            return "already nudged for this parked session"
+        case .notificationsDisabled:
+            return "notifications disabled"
+        case .scheduled:
+            return "notification scheduled"
+        case .failed:
+            return "notification failed"
+        }
+    }
+
+    private func audioRouteSummary(for outputs: [AVAudioSessionPortDescription]) -> String {
+        guard !outputs.isEmpty else { return "none" }
+
+        return outputs
+            .map { output in
+                let routeName = normalizedRouteName(output.portName) ?? "unnamed"
+                return "\(output.portType.rawValue):\(routeName)"
+            }
+            .joined(separator: ",")
     }
 
     private func vehicleSignalRecord(for outputs: [AVAudioSessionPortDescription]) -> VehicleSignalRecord? {
