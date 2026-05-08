@@ -53,6 +53,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         case noReminder
         case armed
         case exitedWaitingForReturn
+        case nearCarWaitingForVehicleConnection
         case notificationScheduled
         case pausedNeedsAlwaysLocation
         case monitoringUnavailable
@@ -66,6 +67,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Parked reminder armed")
             case .exitedWaitingForReturn:
                 return L10n.tr("Left parked zone")
+            case .nearCarWaitingForVehicleConnection:
+                return L10n.tr("Near parked car")
             case .notificationScheduled:
                 return L10n.tr("Return notification scheduled")
             case .pausedNeedsAlwaysLocation:
@@ -85,6 +88,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Monitoring your parked spot now.")
             case .exitedWaitingForReturn:
                 return L10n.tr("Waiting for you to come back to the parked spot.")
+            case .nearCarWaitingForVehicleConnection:
+                return L10n.tr("Waiting for CarPlay or car Bluetooth before nudging.")
             case .notificationScheduled:
                 return L10n.tr("SpotRelay detected your return and queued the local notification.")
             case .pausedNeedsAlwaysLocation:
@@ -105,6 +110,10 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let fallbackExitDistanceMeters: Double = 90
     nonisolated private static let fallbackReturnDistanceMeters: Double = 45
     nonisolated private static let fallbackReturnWithoutExitMinimumAge: TimeInterval = 20 * 60
+    nonisolated private static let vehicleConnectionReturnWithoutExitMinimumAge: TimeInterval = 2 * 60
+    nonisolated private static let vehicleConnectionReturnDistanceMeters: CLLocationDistance = 90
+    nonisolated private static let vehicleConnectionLocationMaximumAge: TimeInterval = 5 * 60
+    nonisolated private static let vehicleConnectionLocationMaximumAccuracyMeters: CLLocationAccuracy = 150
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
     nonisolated private static let parkedLocationHistoryLimit = 10
@@ -287,7 +296,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
 
         if hasExitedRegion, distance <= Self.fallbackReturnDistanceMeters {
-            await handleRegionEntry()
+            handleRegionEntry()
             return
         }
 
@@ -295,8 +304,41 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         if !hasExitedRegion,
            reminderAge >= Self.fallbackReturnWithoutExitMinimumAge,
            distance <= Self.fallbackReturnDistanceMeters {
-            await handleRegionEntry(allowWithoutRecordedExit: true)
+            handleRegionEntry(allowWithoutRecordedExit: true)
         }
+    }
+
+    func handleVehicleConnectionNearParkedCar(
+        sourceSummary: String,
+        location: CLLocation?
+    ) async {
+        guard let reminder = activeReminder else { return }
+
+        let reminderAge = Date().timeIntervalSince(reminder.createdAt)
+        guard hasExitedRegion || reminderAge >= Self.vehicleConnectionReturnWithoutExitMinimumAge else {
+            updateDebugState(.armed)
+            return
+        }
+
+        guard let latestLocation = location ?? locationManager.location,
+              latestLocation.horizontalAccuracy >= 0,
+              latestLocation.horizontalAccuracy <= Self.vehicleConnectionLocationMaximumAccuracyMeters,
+              abs(latestLocation.timestamp.timeIntervalSinceNow) <= Self.vehicleConnectionLocationMaximumAge else {
+            updateDebugState(.nearCarWaitingForVehicleConnection)
+            return
+        }
+
+        let returnDistance = reminder.distanceMeters(from: latestLocation.coordinate)
+        let allowedDistance = max(Self.vehicleConnectionReturnDistanceMeters, reminder.radiusMeters + 20)
+        guard returnDistance <= allowedDistance else {
+            updateDebugState(.exitedWaitingForReturn)
+            return
+        }
+
+        await scheduleReturnNotification(
+            for: reminder,
+            triggerSummary: sourceSummary
+        )
     }
 
     private func restoreMonitoringIfNeeded() async {
@@ -375,9 +417,22 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         updateDebugState(.exitedWaitingForReturn)
     }
 
-    private func handleRegionEntry(allowWithoutRecordedExit: Bool = false) async {
+    private func handleRegionEntry(allowWithoutRecordedExit: Bool = false) {
         guard let reminder = activeReminder else { return }
         guard hasExitedRegion || allowWithoutRecordedExit else { return }
+        guard !hasAlreadyNudgedForSameSession(reminder) else {
+            updateDebugState(.notificationScheduled)
+            clearActiveReminderOnly(preservingNotification: true)
+            return
+        }
+
+        updateDebugState(.nearCarWaitingForVehicleConnection)
+    }
+
+    private func scheduleReturnNotification(
+        for reminder: Reminder,
+        triggerSummary: String
+    ) async {
         guard !hasAlreadyNudgedForSameSession(reminder) else {
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
@@ -401,7 +456,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         content.sound = .default
         content.userInfo = [
             "type": "parking-reminder",
-            "areaLabel": reminder.areaLabel ?? ""
+            "areaLabel": reminder.areaLabel ?? "",
+            "trigger": triggerSummary
         ]
 
         let request = UNNotificationRequest(
@@ -558,7 +614,7 @@ extension ParkingReminderStore: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         guard region.identifier == Keys.regionIdentifier else { return }
         Task { @MainActor [weak self] in
-            await self?.handleRegionEntry()
+            self?.handleRegionEntry()
         }
     }
 
@@ -576,7 +632,7 @@ extension ParkingReminderStore: CLLocationManagerDelegate {
             case .outside:
                 self?.handleRegionExit()
             case .inside:
-                await self?.handleRegionEntry(allowWithoutRecordedExit: false)
+                self?.handleRegionEntry(allowWithoutRecordedExit: false)
             case .unknown:
                 break
             @unknown default:

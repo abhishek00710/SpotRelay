@@ -351,6 +351,7 @@
 "member since" = "miembro desde";
 "motion settled" = "movimiento estabilizado";
 "motion settled fix" = "punto por movimiento estable";
+"Near parked car" = "Cerca del auto estacionado";
 "recent drive" = "viaje reciente";
 "remaining" = "restante";
 "share stars" = "estrellas";
@@ -361,4 +362,5 @@
 "vehicle signal" = "señal del vehículo";
 "visit settled" = "visita estabilizada";
 "visit settled fix" = "punto por visita";
+"Waiting for CarPlay or car Bluetooth before nudging." = "Esperando CarPlay o Bluetooth del auto antes de avisarte.";
 "walking after parking" = "caminando después de estacionar";

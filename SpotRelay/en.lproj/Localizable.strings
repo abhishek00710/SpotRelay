@@ -351,6 +351,7 @@
 "member since" = "member since";
 "motion settled" = "motion settled";
 "motion settled fix" = "motion settled fix";
+"Near parked car" = "Near parked car";
 "recent drive" = "recent drive";
 "remaining" = "remaining";
 "share stars" = "share stars";
@@ -361,4 +362,5 @@
 "vehicle signal" = "vehicle signal";
 "visit settled" = "visit settled";
 "visit settled fix" = "visit settled fix";
+"Waiting for CarPlay or car Bluetooth before nudging." = "Waiting for CarPlay or car Bluetooth before nudging.";
 "walking after parking" = "walking after parking";

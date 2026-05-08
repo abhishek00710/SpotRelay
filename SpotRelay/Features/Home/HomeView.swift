@@ -1311,6 +1311,8 @@ struct HomeView: View {
             return "location.circle.fill"
         case .exitedWaitingForReturn:
             return "figure.walk.departure"
+        case .nearCarWaitingForVehicleConnection:
+            return "car.side.and.exclamationmark.fill"
         case .notificationScheduled:
             return "bell.badge.fill"
         case .pausedNeedsAlwaysLocation:
@@ -1330,6 +1332,8 @@ struct HomeView: View {
             return SpotRelayTheme.success
         case .exitedWaitingForReturn:
             return SpotRelayTheme.primary
+        case .nearCarWaitingForVehicleConnection:
+            return SpotRelayTheme.accent
         case .notificationScheduled:
             return SpotRelayTheme.warning
         case .pausedNeedsAlwaysLocation, .monitoringUnavailable, .notificationsDisabled:

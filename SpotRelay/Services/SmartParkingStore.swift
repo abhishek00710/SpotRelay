@@ -548,6 +548,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
             )
+            await notifyParkedReminderIfVehicleConnectedNearCar(using: latestLocation)
         }
         if let event = parkingCaptureEngine.ingest(locations: locations) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -899,9 +900,27 @@ final class SmartParkingStore: NSObject, ObservableObject {
             parkingSequenceLogger.append("Vehicle signal added: \(source.rawValue)")
             parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            locationManager.startUpdatingLocation()
+            Task {
+                await parkingReminderStore.handleVehicleConnectionNearParkedCar(
+                    sourceSummary: source.summaryLabel,
+                    location: locationManager.location
+                )
+            }
         }
 
         activeVehicleSignals = nextSignals
+    }
+
+    private func notifyParkedReminderIfVehicleConnectedNearCar(using latestLocation: CLLocation) async {
+        guard let strongestVehicleSignal = activeVehicleSignals.max(by: { $0.priority < $1.priority }) else {
+            return
+        }
+
+        await parkingReminderStore.handleVehicleConnectionNearParkedCar(
+            sourceSummary: strongestVehicleSignal.summaryLabel,
+            location: latestLocation
+        )
     }
 
     private func vehicleSignalRecord(for outputs: [AVAudioSessionPortDescription]) -> VehicleSignalRecord? {
