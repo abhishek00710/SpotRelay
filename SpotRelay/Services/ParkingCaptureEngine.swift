@@ -75,6 +75,7 @@ struct ParkingCaptureEngine {
         var lastMovingAt: Date
         var stoppedSince: Date?
         var lastSpeedMetersPerSecond: CLLocationSpeed?
+        var pendingVehicleDisconnectAt: Date?
 
         var duration: TimeInterval {
             Date().timeIntervalSince(startedAt)
@@ -111,6 +112,7 @@ struct ParkingCaptureEngine {
     private static let parkingWindowBeforeEvent: TimeInterval = 3 * 60
     private static let parkingWindowAfterEvent: TimeInterval = 16
     private static let disconnectPostStopCandidateWindow: TimeInterval = 5
+    private static let disconnectStopConfirmationWindow: TimeInterval = 75
     private static let stoppedDwellDuration: TimeInterval = 90
     private static let minimumDriveDuration: TimeInterval = 2 * 60
     private static let minimumDriveDistanceMeters: CLLocationDistance = 250
@@ -152,6 +154,7 @@ struct ParkingCaptureEngine {
         session?.seenVehicleSignals.insert(summary)
         session?.activeVehicleSignals.insert(summary)
         session?.evidence.insert(summary)
+        session?.pendingVehicleDisconnectAt = nil
         lastReason = "Vehicle signal connected"
     }
 
@@ -166,17 +169,28 @@ struct ParkingCaptureEngine {
         activeSession.activeVehicleSignals.remove(summary)
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
-        session = activeSession
         guard activeSession.activeVehicleSignals.isEmpty else {
+            session = activeSession
             lastReason = "One vehicle signal disconnected, but another is still active"
             return nil
         }
-        let parkedAt = activeSession.stoppedSince ?? date
+
+        activeSession.pendingVehicleDisconnectAt = date
+        session = activeSession
+
+        guard let parkedAt = confirmedStoppedParkedAt(for: activeSession, disconnectAt: date) else {
+            lastReason = "Vehicle disconnected: waiting for stopped speed"
+            return nil
+        }
+
+        activeSession.evidence.insert("vehicle disconnected at stopped speed")
+        session = activeSession
+
         return finalize(
             source: .vehicleDisconnect,
             parkedAt: parkedAt,
             selectionEnd: date,
-            reason: "Vehicle disconnected"
+            reason: "Vehicle disconnected with stopped speed"
         )
     }
 
@@ -235,6 +249,10 @@ struct ParkingCaptureEngine {
             updateMotionFromSpeed(location)
 
             if detectedEvent == nil {
+                detectedEvent = settleFromPendingVehicleDisconnectIfReady(at: location.timestamp)
+            }
+
+            if detectedEvent == nil {
                 detectedEvent = settleFromLocationDwellIfReady(at: location.timestamp)
             }
         }
@@ -268,7 +286,8 @@ struct ParkingCaptureEngine {
                 distanceMeters: 0,
                 lastMovingAt: startedAt,
                 stoppedSince: nil,
-                lastSpeedMetersPerSecond: nil
+                lastSpeedMetersPerSecond: nil,
+                pendingVehicleDisconnectAt: nil
             )
         } else {
             session?.evidence.insert(evidence)
@@ -337,8 +356,8 @@ struct ParkingCaptureEngine {
             return nil
         }
 
-        if activeSession.vehicleConnectionActive, source == .visitSettled {
-            lastReason = "Deferring visit settle while vehicle connection is still active"
+        if activeSession.vehicleConnectionActive {
+            lastReason = "Deferring \(source.label): vehicle signal still active"
             return nil
         }
 
@@ -367,6 +386,52 @@ struct ParkingCaptureEngine {
             selectionEnd: date,
             reason: "Location dwell complete"
         )
+    }
+
+    private mutating func settleFromPendingVehicleDisconnectIfReady(at date: Date) -> ParkingCaptureEvent? {
+        guard var activeSession = session,
+              let disconnectAt = activeSession.pendingVehicleDisconnectAt else {
+            return nil
+        }
+
+        guard activeSession.activeVehicleSignals.isEmpty else {
+            lastReason = "Vehicle disconnected, but another vehicle signal is still active"
+            return nil
+        }
+
+        guard let parkedAt = confirmedStoppedParkedAt(for: activeSession, disconnectAt: disconnectAt) else {
+            if let stoppedSince = activeSession.stoppedSince,
+               stoppedSince > disconnectAt,
+               stoppedSince.timeIntervalSince(disconnectAt) > Self.disconnectStopConfirmationWindow {
+                activeSession.pendingVehicleDisconnectAt = nil
+                session = activeSession
+                lastReason = "Ignoring stale vehicle disconnect: stop happened too late"
+            } else {
+                lastReason = "Vehicle disconnected: waiting for stopped speed"
+            }
+            return nil
+        }
+
+        activeSession.evidence.insert("vehicle disconnected at stopped speed")
+        session = activeSession
+
+        return finalize(
+            source: .vehicleDisconnect,
+            parkedAt: parkedAt,
+            selectionEnd: date,
+            reason: "Vehicle disconnected with stopped speed"
+        )
+    }
+
+    private func confirmedStoppedParkedAt(for session: Session, disconnectAt: Date) -> Date? {
+        guard let stoppedSince = session.stoppedSince else { return nil }
+
+        if stoppedSince > disconnectAt,
+           stoppedSince.timeIntervalSince(disconnectAt) > Self.disconnectStopConfirmationWindow {
+            return nil
+        }
+
+        return stoppedSince
     }
 
     private mutating func finalize(
