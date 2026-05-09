@@ -74,6 +74,7 @@ struct ParkingCaptureEngine {
         var distanceMeters: CLLocationDistance
         var lastMovingAt: Date
         var stoppedSince: Date?
+        var stoppedCandidateLocation: CLLocation?
         var lastSpeedMetersPerSecond: CLLocationSpeed?
         var pendingVehicleDisconnectAt: Date?
 
@@ -286,6 +287,7 @@ struct ParkingCaptureEngine {
                 distanceMeters: 0,
                 lastMovingAt: startedAt,
                 stoppedSince: nil,
+                stoppedCandidateLocation: nil,
                 lastSpeedMetersPerSecond: nil,
                 pendingVehicleDisconnectAt: nil
             )
@@ -325,6 +327,7 @@ struct ParkingCaptureEngine {
         if location.speed >= Self.movingSpeedMetersPerSecond {
             session?.lastMovingAt = location.timestamp
             session?.stoppedSince = nil
+            session?.stoppedCandidateLocation = nil
             if location.speed >= Self.minimumDriveSpeedMetersPerSecond {
                 session?.evidence.insert("driving speed")
                 session?.sawDrivingMotion = true
@@ -335,6 +338,7 @@ struct ParkingCaptureEngine {
         if location.speed <= Self.stoppedSpeedMetersPerSecond {
             if session?.stoppedSince == nil {
                 session?.stoppedSince = location.timestamp
+                session?.stoppedCandidateLocation = location
             }
             session?.evidence.insert("speed settled")
         }
@@ -518,6 +522,16 @@ struct ParkingCaptureEngine {
         let lowSpeedCandidates = candidates.filter {
             $0.speed < 0 || $0.speed <= Self.stoppedSpeedMetersPerSecond
         }
+        if let stoppedCandidate = session.stoppedCandidateLocation,
+           stoppedCandidate.horizontalAccuracy >= 0,
+           stoppedCandidate.horizontalAccuracy <= Self.requiredAutoSaveAccuracyMeters,
+           candidates.contains(where: { $0.timestamp == stoppedCandidate.timestamp }) {
+            return LocationSelection(
+                location: stoppedCandidate,
+                evidence: ["first parking candidate stop point"]
+            )
+        }
+
         let preferredStopCandidates = lowSpeedCandidates.filter { location in
             location.timestamp >= parkedAt.addingTimeInterval(-Self.preferredStopWindowBeforeParkedAt)
             && location.timestamp <= parkedAt.addingTimeInterval(Self.preferredStopWindowAfterParkedAt)

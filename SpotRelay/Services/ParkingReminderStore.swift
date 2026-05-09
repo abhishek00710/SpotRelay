@@ -122,7 +122,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let fallbackReturnDistanceMeters: Double = 45
     nonisolated private static let fallbackReturnWithoutExitMinimumAge: TimeInterval = 20 * 60
     nonisolated private static let vehicleConnectionReturnWithoutExitMinimumAge: TimeInterval = 2 * 60
-    nonisolated private static let vehicleConnectionReturnDistanceMeters: CLLocationDistance = 90
+    nonisolated private static let vehicleConnectionReturnDistanceMeters: CLLocationDistance = 200
     nonisolated private static let vehicleConnectionLocationMaximumAge: TimeInterval = 5 * 60
     nonisolated private static let vehicleConnectionLocationMaximumAccuracyMeters: CLLocationAccuracy = 150
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1

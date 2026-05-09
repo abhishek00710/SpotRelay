@@ -823,18 +823,20 @@ final class SmartParkingStore: NSObject, ObservableObject {
             parkingSequenceLogger.append("Audio previous route: \(audioRouteSummary(for: previousOutputs))")
             if let disconnectedRecord = vehicleSignalRecord(for: previousOutputs) {
                 parkingSequenceLogger.append("Audio route disconnected: \(disconnectedRecord.source.rawValue) \(disconnectedRecord.routeName ?? "")")
-                if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
-                    parkingCaptureSnapshot = parkingCaptureEngine.snapshot
-                    Task {
-                        await processParkingCaptureEvent(event)
+                if !activeVehicleSignals.contains(disconnectedRecord.source) {
+                    if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
+                        parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+                        Task {
+                            await processParkingCaptureEvent(event)
+                        }
+                    } else {
+                        parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                     }
-                } else {
-                    parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                 }
             }
-            pruneStaleVehicleConnectionEvidence()
+            refreshVehicleConnectionEvidence()
         default:
-            break
+            refreshVehicleConnectionEvidence()
         }
     }
 
