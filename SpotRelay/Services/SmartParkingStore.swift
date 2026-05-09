@@ -245,6 +245,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private var recentBluetoothVehicleSignal: VehicleSignalRecord?
     private var knownVehiclePeripheralNames = Set<String>()
     private var bluetoothScanStopTask: Task<Void, Never>?
+    private var isPhoneChargingDriveSignalActive = false
     private let parkingSequenceLogger = ParkingSequenceLogger()
 
     private enum Keys {
@@ -264,6 +265,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let currentLocationCorrectionDistanceMeters: CLLocationDistance = 45
     nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
     nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
+    nonisolated private static let resumedDrivingRetireDistanceFromSavedSpot: CLLocationDistance = 250
+    nonisolated private static let phoneChargingDriveSpeedMetersPerSecond: CLLocationSpeed = 15
     nonisolated private static let bluetoothVehicleSignalFreshnessWindow: TimeInterval = 120
     nonisolated private static let automotiveSignalFreshnessWindow: TimeInterval = 6 * 60
     nonisolated private static let bluetoothScanDuration: TimeInterval = 10
@@ -304,6 +307,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         bluetoothManager = CBCentralManager(delegate: self, queue: nil, options: [
             CBCentralManagerOptionShowPowerAlertKey: false
         ])
+        UIDevice.current.isBatteryMonitoringEnabled = true
         parkingSequenceLogger.append("SmartParkingStore init: enabled=\(isEnabled), status=\(locationAuthorizationStatus.rawValue)")
 
         activeReminderCancellable = parkingReminderStore.$activeReminder
@@ -337,6 +341,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshVehicleConnectionEvidence()
+            }
+            .store(in: &notificationCancellables)
+
+        NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleBatteryStateChange()
             }
             .store(in: &notificationCancellables)
 
@@ -544,6 +555,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         if let latestLocation = locations.last {
             parkingSequenceLogger.append("Location update: count=\(locations.count), lat=\(latestLocation.coordinate.latitude), lon=\(latestLocation.coordinate.longitude), accuracy=\(Int(latestLocation.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", max(latestLocation.speed, 0)))")
+            observePhoneChargingDriveSignal(using: latestLocation)
             observeSavedParkedSpotWhileUserMoves(
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
@@ -557,6 +569,42 @@ final class SmartParkingStore: NSObject, ObservableObject {
         } else {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             parkingSequenceLogger.append("Location ingested without save: \(parkingCaptureSnapshot.lastReason)")
+        }
+    }
+
+    private func observePhoneChargingDriveSignal(using latestLocation: CLLocation) {
+        guard latestLocation.speed >= Self.phoneChargingDriveSpeedMetersPerSecond else { return }
+        guard Self.isPhoneConnectedToPower(UIDevice.current.batteryState) else { return }
+        guard !isPhoneChargingDriveSignalActive else { return }
+
+        isPhoneChargingDriveSignalActive = true
+        parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: true))
+        parkingCaptureEngine.vehicleConnected(summary: "vehicle-signal:phone-charging")
+        parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+    }
+
+    private func handleBatteryStateChange() {
+        guard isEnabled else { return }
+        let batteryState = UIDevice.current.batteryState
+
+        if Self.isPhoneConnectedToPower(batteryState) {
+            locationManager.startUpdatingLocation()
+            return
+        }
+
+        guard batteryState == .unplugged else { return }
+        guard isPhoneChargingDriveSignalActive else { return }
+
+        isPhoneChargingDriveSignalActive = false
+        parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: false))
+        locationManager.startUpdatingLocation()
+        if let event = parkingCaptureEngine.vehicleDisconnected(summary: "vehicle-signal:phone-charging") {
+            parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            Task {
+                await processParkingCaptureEvent(event)
+            }
+        } else {
+            parkingCaptureSnapshot = parkingCaptureEngine.snapshot
         }
     }
 
@@ -576,6 +624,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
         if hasAutomotiveSignal, let latestLocation {
             let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
+            if latestLocation.speed >= Self.resumedDrivingSpeedMetersPerSecond,
+               distanceFromSavedSpot >= Self.resumedDrivingRetireDistanceFromSavedSpot {
+                if parkingReminderStore.retireCurrentParkedSpotForDriving() {
+                    parkingSequenceLogger.append("Retiring saved parked spot after pickup: speed=\(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
+                }
+                return
+            }
+
             if distanceFromSavedSpot >= Self.resumedDrivingMinimumDistanceFromSavedSpot {
                 if parkingReminderStore.noteMovedAwayFromParkedSpot() {
                     parkingSequenceLogger.append("Parked reminder kept armed after leaving: automotive signal resumed, distance=\(Int(distanceFromSavedSpot.rounded()))m")
@@ -594,9 +650,29 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let distanceFromSavedSpot = latestLocation.distance(from: parkedLocation)
         guard distanceFromSavedSpot >= distanceThreshold else { return }
 
+        if distanceFromSavedSpot >= Self.resumedDrivingRetireDistanceFromSavedSpot {
+            if parkingReminderStore.retireCurrentParkedSpotForDriving() {
+                parkingSequenceLogger.append("Retiring saved parked spot after pickup: speed=\(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
+            }
+            return
+        }
+
         if parkingReminderStore.noteMovedAwayFromParkedSpot() {
             parkingSequenceLogger.append("Parked reminder kept armed after leaving: speed resumed at \(String(format: "%.2f", latestLocation.speed))m/s, distance=\(Int(distanceFromSavedSpot.rounded()))m")
         }
+    }
+
+    private static func isPhoneConnectedToPower(_ batteryState: UIDevice.BatteryState) -> Bool {
+        batteryState == .charging || batteryState == .full
+    }
+
+    private func phoneChargingLocationLogLine(isConnected: Bool) -> String {
+        let transition = isConnected ? "connect" : "disconnect"
+        guard let location = locationManager.location else {
+            return "Phone charging \(transition) at lat - unavailable and long - unavailable"
+        }
+
+        return "Phone charging \(transition) at lat - \(location.coordinate.latitude) and long - \(location.coordinate.longitude), accuracy=\(Int(location.horizontalAccuracy.rounded()))m"
     }
 
     private func processParkingCaptureEvent(_ event: ParkingCaptureEvent) async {
@@ -905,6 +981,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let added = nextSignals.subtracting(activeVehicleSignals)
 
         for source in removed.sorted(by: { $0.priority > $1.priority }) {
+            parkingSequenceLogger.append(vehicleSignalLocationLogLine(source: source, isConnected: false))
             parkingSequenceLogger.append("Vehicle signal removed: \(source.rawValue)")
             if let event = parkingCaptureEngine.vehicleDisconnected(summary: source.captureToken) {
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -917,6 +994,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         for source in added.sorted(by: { $0.priority > $1.priority }) {
+            parkingSequenceLogger.append(vehicleSignalLocationLogLine(source: source, isConnected: true))
             parkingSequenceLogger.append("Vehicle signal added: \(source.rawValue)")
             parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -932,6 +1010,23 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         activeVehicleSignals = nextSignals
+    }
+
+    private func vehicleSignalLocationLogLine(source: VehicleSignalSource, isConnected: Bool) -> String {
+        let vehicleName: String
+        switch source {
+        case .carPlay, .carAudio:
+            vehicleName = "Carplay"
+        case .bluetoothAudio, .coreBluetoothVehicle:
+            vehicleName = "Bluetooth"
+        }
+
+        let transition = isConnected ? "connect" : "disconnect"
+        guard let location = locationManager.location else {
+            return "\(vehicleName) \(transition) at lat - unavailable and long - unavailable"
+        }
+
+        return "\(vehicleName) \(transition) at lat - \(location.coordinate.latitude) and long - \(location.coordinate.longitude), accuracy=\(Int(location.horizontalAccuracy.rounded()))m"
     }
 
     private func notifyParkedReminderIfVehicleConnectedNearCar(using latestLocation: CLLocation) async {

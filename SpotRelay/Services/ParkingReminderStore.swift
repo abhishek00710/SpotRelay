@@ -243,12 +243,14 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         updateDebugState(.noReminder)
     }
 
-    func retireCurrentParkedSpotForDriving() async {
-        guard activeReminder != nil || savedParkedLocation != nil else { return }
+    @discardableResult
+    func retireCurrentParkedSpotForDriving() -> Bool {
+        guard activeReminder != nil || savedParkedLocation != nil else { return false }
         clearActiveReminderOnly()
         defaults.removeObject(forKey: Keys.savedParkedLocation)
         savedParkedLocation = nil
         updateDebugState(.noReminder)
+        return true
     }
 
     @discardableResult
@@ -544,9 +546,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             )
         }
         history.insert(reminder, at: 0)
-        if history.count > Self.parkedLocationHistoryLimit {
-            history = Array(history.prefix(Self.parkedLocationHistoryLimit))
-        }
+        history = Self.limitedHistory(history)
         parkedLocationHistory = history
         persist(history, key: Keys.parkedLocationHistory)
     }
@@ -571,7 +571,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
               let reminders = try? JSONDecoder().decode([Reminder].self, from: data) else {
             return []
         }
-        return reminders
+        return limitedHistory(reminders)
     }
 
     private static func derivedDebugState(activeReminder: Reminder?, hasExitedRegion: Bool) -> DebugState {
@@ -596,11 +596,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             }
         }
 
-        let normalizedHistory = parkedLocationHistory.map { $0.normalizedRadius() }
+        let normalizedHistory = Self.limitedHistory(parkedLocationHistory.map { $0.normalizedRadius() })
         if normalizedHistory != parkedLocationHistory {
             parkedLocationHistory = normalizedHistory
             persist(normalizedHistory, key: Keys.parkedLocationHistory)
         }
+    }
+
+    private static func limitedHistory(_ history: [Reminder]) -> [Reminder] {
+        Array(history.prefix(parkedLocationHistoryLimit))
     }
 
     private func removeExpiredSavedLocationIfNeeded(now: Date = .now) {

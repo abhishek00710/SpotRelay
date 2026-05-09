@@ -121,7 +121,7 @@ struct HomeView: View {
                 }) {
                     UserAnnotation()
 
-                    if let parkedLocation = parkingReminderStore.latestRememberedParkedLocation {
+                    if let parkedLocation = parkingReminderStore.savedParkedLocation {
                         Annotation("You parked here", coordinate: parkedLocation.coordinate) {
                             Button {
                                 beginParkedPinEditing(using: parkedLocation)
@@ -133,7 +133,7 @@ struct HomeView: View {
                     }
 
                     if let selectedParkedHistoryReminder,
-                       selectedParkedHistoryReminder != parkingReminderStore.latestRememberedParkedLocation {
+                       selectedParkedHistoryReminder != parkingReminderStore.savedParkedLocation {
                         Annotation("Selected parked spot", coordinate: selectedParkedHistoryReminder.coordinate) {
                             SelectedParkedHistoryPinView()
                         }

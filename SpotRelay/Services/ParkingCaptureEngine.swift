@@ -112,8 +112,10 @@ struct ParkingCaptureEngine {
     private static let sessionSampleRetention: TimeInterval = 30 * 60
     private static let parkingWindowBeforeEvent: TimeInterval = 3 * 60
     private static let parkingWindowAfterEvent: TimeInterval = 16
-    private static let disconnectPostStopCandidateWindow: TimeInterval = 5
+    private static let disconnectPreStopConfirmationWindow: TimeInterval = 45
     private static let disconnectStopConfirmationWindow: TimeInterval = 75
+    private static let vehicleDisconnectSettleDelay: TimeInterval = 15
+    private static let vehicleDisconnectRefinementRadiusMeters: CLLocationDistance = 18
     private static let stoppedDwellDuration: TimeInterval = 90
     private static let minimumDriveDuration: TimeInterval = 2 * 60
     private static let minimumDriveDistanceMeters: CLLocationDistance = 250
@@ -178,21 +180,8 @@ struct ParkingCaptureEngine {
 
         activeSession.pendingVehicleDisconnectAt = date
         session = activeSession
-
-        guard let parkedAt = confirmedStoppedParkedAt(for: activeSession, disconnectAt: date) else {
-            lastReason = "Vehicle disconnected: waiting for stopped speed"
-            return nil
-        }
-
-        activeSession.evidence.insert("vehicle disconnected at stopped speed")
-        session = activeSession
-
-        return finalize(
-            source: .vehicleDisconnect,
-            parkedAt: parkedAt,
-            selectionEnd: date,
-            reason: "Vehicle disconnected with stopped speed"
-        )
+        lastReason = "Vehicle disconnected: waiting for final stop confirmation"
+        return nil
     }
 
     mutating func ingest(activity: CMMotionActivity, at receivedAt: Date = .now) -> ParkingCaptureEvent? {
@@ -206,7 +195,8 @@ struct ParkingCaptureEngine {
             if var activeSession = session {
                 activeSession.lastMovingAt = max(activeSession.lastMovingAt, activity.startDate)
                 activeSession.sawDrivingMotion = true
-                activeSession.stoppedSince = nil
+                // CoreMotion can keep reporting automotive after the car has already stopped.
+                // Only GPS speed should clear the first stopped parking candidate.
                 session = activeSession
             }
             lastReason = "Driving motion detected"
@@ -325,6 +315,11 @@ struct ParkingCaptureEngine {
         session?.lastSpeedMetersPerSecond = location.speed
 
         if location.speed >= Self.movingSpeedMetersPerSecond {
+            if let disconnectAt = session?.pendingVehicleDisconnectAt,
+               location.timestamp > disconnectAt {
+                session?.pendingVehicleDisconnectAt = nil
+                lastReason = "Ignoring vehicle disconnect: driving resumed"
+            }
             session?.lastMovingAt = location.timestamp
             session?.stoppedSince = nil
             session?.stoppedCandidateLocation = nil
@@ -364,6 +359,10 @@ struct ParkingCaptureEngine {
             lastReason = "Deferring \(source.label): vehicle signal still active"
             return nil
         }
+        if activeSession.vehicleSignalSeen {
+            lastReason = "Deferring \(source.label): waiting for vehicle disconnect"
+            return nil
+        }
 
         return finalize(
             source: source,
@@ -382,6 +381,10 @@ struct ParkingCaptureEngine {
         }
         if activeSession.vehicleConnectionActive {
             lastReason = "Parking candidate: vehicle signal still active"
+            return nil
+        }
+        if activeSession.vehicleSignalSeen {
+            lastReason = "Parking candidate: waiting for vehicle disconnect"
             return nil
         }
         return finalize(
@@ -403,7 +406,12 @@ struct ParkingCaptureEngine {
             return nil
         }
 
-        guard let parkedAt = confirmedStoppedParkedAt(for: activeSession, disconnectAt: disconnectAt) else {
+        guard date.timeIntervalSince(disconnectAt) >= Self.vehicleDisconnectSettleDelay else {
+            lastReason = "Vehicle disconnected: waiting for final stop confirmation"
+            return nil
+        }
+
+        guard confirmedStoppedParkedAt(for: activeSession, disconnectAt: disconnectAt) != nil else {
             if let stoppedSince = activeSession.stoppedSince,
                stoppedSince > disconnectAt,
                stoppedSince.timeIntervalSince(disconnectAt) > Self.disconnectStopConfirmationWindow {
@@ -419,9 +427,11 @@ struct ParkingCaptureEngine {
         activeSession.evidence.insert("vehicle disconnected at stopped speed")
         session = activeSession
 
+        // The delay confirms parking, but the coordinate must come from the
+        // disconnect moment, not from where the user walked 15 seconds later.
         return finalize(
             source: .vehicleDisconnect,
-            parkedAt: parkedAt,
+            parkedAt: disconnectAt,
             selectionEnd: date,
             reason: "Vehicle disconnected with stopped speed"
         )
@@ -429,6 +439,21 @@ struct ParkingCaptureEngine {
 
     private func confirmedStoppedParkedAt(for session: Session, disconnectAt: Date) -> Date? {
         guard let stoppedSince = session.stoppedSince else { return nil }
+
+        if stoppedSince < disconnectAt,
+           disconnectAt.timeIntervalSince(stoppedSince) > Self.disconnectPreStopConfirmationWindow {
+            return session.samples
+                .map(\.location)
+                .filter { location in
+                    guard location.timestamp <= disconnectAt else { return false }
+                    guard disconnectAt.timeIntervalSince(location.timestamp) <= Self.disconnectPreStopConfirmationWindow else { return false }
+                    guard location.horizontalAccuracy >= 0,
+                          location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else { return false }
+                    return location.speed < 0 || location.speed <= Self.stoppedSpeedMetersPerSecond
+                }
+                .max(by: { $0.timestamp < $1.timestamp })?
+                .timestamp
+        }
 
         if stoppedSince > disconnectAt,
            stoppedSince.timeIntervalSince(disconnectAt) > Self.disconnectStopConfirmationWindow {
@@ -491,10 +516,18 @@ struct ParkingCaptureEngine {
         source: ParkingCaptureEvent.Source
     ) -> LocationSelection? {
         let earliest = parkedAt.addingTimeInterval(-Self.parkingWindowBeforeEvent)
-        let latest = max(
-            parkedAt.addingTimeInterval(Self.parkingWindowAfterEvent),
-            min(selectionEnd, parkedAt.addingTimeInterval(Self.stoppedDwellDuration + Self.parkingWindowAfterEvent))
-        )
+        let latest: Date
+        if source == .vehicleDisconnect {
+            latest = min(selectionEnd, parkedAt.addingTimeInterval(Self.vehicleDisconnectSettleDelay))
+        } else {
+            latest = max(
+                parkedAt.addingTimeInterval(Self.parkingWindowAfterEvent),
+                min(selectionEnd, parkedAt.addingTimeInterval(Self.stoppedDwellDuration + Self.parkingWindowAfterEvent))
+            )
+        }
+        let vehicleDisconnectAnchor = source == .vehicleDisconnect
+            ? bestVehicleDisconnectAnchor(from: session, disconnectAt: parkedAt)
+            : nil
 
         let candidates = session.samples
             .map(\.location)
@@ -503,13 +536,13 @@ struct ParkingCaptureEngine {
                 guard location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else { return false }
                 guard location.timestamp >= earliest, location.timestamp <= latest else { return false }
                 if source == .vehicleDisconnect, location.timestamp > parkedAt {
-                    let secondsAfterStop = location.timestamp.timeIntervalSince(parkedAt)
-                    guard secondsAfterStop <= Self.disconnectPostStopCandidateWindow else {
+                    guard let vehicleDisconnectAnchor else {
                         return false
                     }
-                    if location.speed >= 0, location.speed > Self.stoppedSpeedMetersPerSecond {
+                    guard location.distance(from: vehicleDisconnectAnchor) <= Self.vehicleDisconnectRefinementRadiusMeters else {
                         return false
                     }
+                    return location.speed < 0 || location.speed <= Self.maximumWalkingSpeedMetersPerSecond
                 }
                 if location.speed >= 0, location.speed > Self.maximumWalkingSpeedMetersPerSecond {
                     return location.timestamp <= parkedAt
@@ -525,6 +558,7 @@ struct ParkingCaptureEngine {
         if let stoppedCandidate = session.stoppedCandidateLocation,
            stoppedCandidate.horizontalAccuracy >= 0,
            stoppedCandidate.horizontalAccuracy <= Self.requiredAutoSaveAccuracyMeters,
+           (source != .vehicleDisconnect || abs(stoppedCandidate.timestamp.timeIntervalSince(parkedAt)) <= Self.disconnectPreStopConfirmationWindow),
            candidates.contains(where: { $0.timestamp == stoppedCandidate.timestamp }) {
             return LocationSelection(
                 location: stoppedCandidate,
@@ -579,6 +613,24 @@ struct ParkingCaptureEngine {
         }
 
         return LocationSelection(location: bestLocation, evidence: selectionEvidence)
+    }
+
+    private func bestVehicleDisconnectAnchor(from session: Session, disconnectAt: Date) -> CLLocation? {
+        session.samples
+            .map(\.location)
+            .filter { location in
+                guard location.timestamp <= disconnectAt else { return false }
+                guard disconnectAt.timeIntervalSince(location.timestamp) <= Self.disconnectPreStopConfirmationWindow else { return false }
+                guard location.horizontalAccuracy >= 0,
+                      location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else { return false }
+                return location.speed < 0 || location.speed <= Self.stoppedSpeedMetersPerSecond
+            }
+            .min { lhs, rhs in
+                if lhs.horizontalAccuracy != rhs.horizontalAccuracy {
+                    return lhs.horizontalAccuracy < rhs.horizontalAccuracy
+                }
+                return lhs.timestamp > rhs.timestamp
+            }
     }
 
     private func confidence(
