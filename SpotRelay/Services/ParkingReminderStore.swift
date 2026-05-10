@@ -128,7 +128,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
     nonisolated private static let parkedLocationHistoryLimit = 10
-    nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 25
+    nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 18
     nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
     nonisolated private static let nudgedSessionDuplicateDistanceMeters: CLLocationDistance = 35
     nonisolated private static let nudgedSessionDuplicateTimeWindow: TimeInterval = 12 * 60 * 60
@@ -466,6 +466,9 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional ||
               settings.authorizationStatus == .ephemeral else {
+            ParkingSequenceLogger.shared.append(
+                "Return notification not scheduled: authorizationStatus=\(settings.authorizationStatus.rawValue)"
+            )
             updateDebugState(.notificationsDisabled)
             return .notificationsDisabled
         }
@@ -493,12 +496,18 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
         do {
             try await center.add(request)
+            ParkingSequenceLogger.shared.append(
+                "Return notification add succeeded: id=\(Keys.notificationIdentifier), title=\(content.title), trigger=\(triggerSummary), area=\(reminder.areaLabel ?? "unknown area")"
+            )
             persist(reminder, key: Keys.lastNudgedReminder)
             lastNudgedReminder = reminder
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
             return .scheduled
         } catch {
+            ParkingSequenceLogger.shared.append(
+                "Return notification add failed: id=\(Keys.notificationIdentifier), error=\(error.localizedDescription)"
+            )
             #if DEBUG
             print("SpotRelay parked reminder notification failed:", error.localizedDescription)
             #endif

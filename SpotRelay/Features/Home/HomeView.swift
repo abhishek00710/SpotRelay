@@ -139,6 +139,17 @@ struct HomeView: View {
                         }
                     }
 
+                    ForEach(parkedHistoryMapReminders, id: \.createdAt) { historyReminder in
+                        Annotation("Previous parked spot", coordinate: historyReminder.coordinate) {
+                            Button {
+                                focusOnParkedReminder(historyReminder)
+                            } label: {
+                                ParkedHistoryMapPinView()
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
                     ForEach(spotStore.nearbyActiveSpots) { spot in
                         Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
                             Button {
@@ -421,14 +432,6 @@ struct HomeView: View {
                 if parkingReminderStore.hasRememberedParkedLocations {
                     VStack(alignment: .trailing, spacing: 6) {
                         parkedLocationShortcutButton
-                        if let winningSourceBadgeTitle = smartParkingStore.winningSourceBadgeTitle {
-                            Text(winningSourceBadgeTitle)
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(SpotRelayTheme.badgeFill, in: Capsule())
-                                .foregroundStyle(SpotRelayTheme.badgeText)
-                        }
                     }
                 }
             }
@@ -886,6 +889,13 @@ struct HomeView: View {
 
     private var hasShareableLocation: Bool {
         parkingReminderStore.latestRememberedParkedLocation != nil || spotStore.userCoordinate != nil
+    }
+
+    private var parkedHistoryMapReminders: [ParkingReminderStore.Reminder] {
+        parkingReminderStore.parkedLocationHistory.filter { reminder in
+            reminder != parkingReminderStore.savedParkedLocation &&
+            reminder != selectedParkedHistoryReminder
+        }
     }
 
     private func recenterOnUser() {
@@ -1923,6 +1933,21 @@ private struct SelectedParkedHistoryPinView: View {
     }
 }
 
+private struct ParkedHistoryMapPinView: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(SpotRelayTheme.chrome.opacity(0.96))
+                .frame(width: 16, height: 16)
+
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white, SpotRelayTheme.badgeText)
+        }
+        .shadow(color: SpotRelayTheme.shadow, radius: 8, y: 5)
+    }
+}
+
 private struct TrianglePointer: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -2286,6 +2311,15 @@ private struct ParkedLocationDetailView: View {
                 .font(.subheadline)
                 .foregroundStyle(SpotRelayTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let winningSourceBadgeTitle = smartParkingStore.winningSourceBadgeTitle {
+                Text(winningSourceBadgeTitle)
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+            }
 
             Text(smartParkingStore.parkingLogFilePath)
                 .font(.caption.monospaced())

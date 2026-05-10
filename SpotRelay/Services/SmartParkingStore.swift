@@ -246,7 +246,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private var knownVehiclePeripheralNames = Set<String>()
     private var bluetoothScanStopTask: Task<Void, Never>?
     private var isPhoneChargingDriveSignalActive = false
-    private let parkingSequenceLogger = ParkingSequenceLogger()
+    private let parkingSequenceLogger = ParkingSequenceLogger.shared
 
     private enum Keys {
         static let isEnabled = "smartParking.enabled"
@@ -257,7 +257,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     }
 
     nonisolated private static let duplicateArmSuppressionWindow: TimeInterval = 12 * 60 * 60
-    nonisolated private static let duplicateArmDistanceMeters: CLLocationDistance = 120
+    nonisolated private static let duplicateArmDistanceMeters: CLLocationDistance = 18
     nonisolated private static let staleVehicleSignalWindow: TimeInterval = 24 * 60 * 60
     nonisolated private static let currentLocationCorrectionMaximumAge: TimeInterval = 90
     nonisolated private static let currentLocationCorrectionMaximumEventOffset: TimeInterval = 5 * 60
@@ -266,7 +266,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
     nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
     nonisolated private static let resumedDrivingRetireDistanceFromSavedSpot: CLLocationDistance = 250
-    nonisolated private static let phoneChargingDriveSpeedMetersPerSecond: CLLocationSpeed = 15
+    nonisolated private static let phoneChargingDriveDistanceMeters: CLLocationDistance = 250
     nonisolated private static let bluetoothVehicleSignalFreshnessWindow: TimeInterval = 120
     nonisolated private static let automotiveSignalFreshnessWindow: TimeInterval = 6 * 60
     nonisolated private static let bluetoothScanDuration: TimeInterval = 10
@@ -540,6 +540,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 hasAutomotiveSignal: true,
                 latestLocation: locationManager.location
             )
+            observePhoneChargingDriveSignalIfQualified()
         }
         if let event = parkingCaptureEngine.ingest(activity: activity) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -555,7 +556,6 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         if let latestLocation = locations.last {
             parkingSequenceLogger.append("Location update: count=\(locations.count), lat=\(latestLocation.coordinate.latitude), lon=\(latestLocation.coordinate.longitude), accuracy=\(Int(latestLocation.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", max(latestLocation.speed, 0)))")
-            observePhoneChargingDriveSignal(using: latestLocation)
             observeSavedParkedSpotWhileUserMoves(
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
@@ -570,17 +570,33 @@ final class SmartParkingStore: NSObject, ObservableObject {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             parkingSequenceLogger.append("Location ingested without save: \(parkingCaptureSnapshot.lastReason)")
         }
+        if locations.last != nil {
+            observePhoneChargingDriveSignalIfQualified()
+        }
     }
 
-    private func observePhoneChargingDriveSignal(using latestLocation: CLLocation) {
-        guard latestLocation.speed >= Self.phoneChargingDriveSpeedMetersPerSecond else { return }
+    private func observePhoneChargingDriveSignalIfQualified() {
         guard Self.isPhoneConnectedToPower(UIDevice.current.batteryState) else { return }
         guard !isPhoneChargingDriveSignalActive else { return }
+        guard hasQualifiedDriveForPhoneCharging else { return }
 
         isPhoneChargingDriveSignalActive = true
         parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: true))
         parkingCaptureEngine.vehicleConnected(summary: "vehicle-signal:phone-charging")
         parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+    }
+
+    private var hasQualifiedDriveForPhoneCharging: Bool {
+        if !activeVehicleSignals.isEmpty {
+            return true
+        }
+
+        if let recentAutomotiveActivityAt,
+           Date().timeIntervalSince(recentAutomotiveActivityAt) <= Self.automotiveSignalFreshnessWindow {
+            return true
+        }
+
+        return parkingCaptureSnapshot.driveDistanceMeters >= Self.phoneChargingDriveDistanceMeters
     }
 
     private func handleBatteryStateChange() {
@@ -593,7 +609,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         guard batteryState == .unplugged else { return }
-        guard isPhoneChargingDriveSignalActive else { return }
+        guard isPhoneChargingDriveSignalActive else {
+            parkingSequenceLogger.append("Phone charging disconnect ignored: no qualified drive charging signal")
+            return
+        }
 
         isPhoneChargingDriveSignalActive = false
         parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: false))
@@ -681,10 +700,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let coordinate = locationDecision.location.coordinate
         if let activeReminder = parkingReminderStore.activeReminder {
             let distanceFromActiveReminder = activeReminder.distanceMeters(from: coordinate)
-            let replacementDistance = max(
-                Self.duplicateArmDistanceMeters,
-                activeReminder.radiusMeters + 35
-            )
+            let replacementDistance = Self.duplicateArmDistanceMeters
             guard distanceFromActiveReminder >= replacementDistance else {
                 parkingSequenceLogger.append("Skipped save: active parked reminder already armed within \(Int(distanceFromActiveReminder.rounded()))m")
                 return
@@ -692,7 +708,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
             parkingSequenceLogger.append("Replacing active parked reminder: new parked capture is \(Int(distanceFromActiveReminder.rounded()))m from previous spot")
         }
-        guard !isLikelyDuplicateArm(at: coordinate, comparedTo: lastAutoArmRecord) else { return }
+        guard !isLikelyDuplicateArm(at: coordinate, comparedTo: lastAutoArmRecord) else {
+            parkingSequenceLogger.append("Skipped save: duplicate parked capture within \(Int(Self.duplicateArmDistanceMeters.rounded()))m suppression window")
+            return
+        }
 
         let areaLabel = await reverseGeocodedAreaLabel(for: coordinate)
         let source = locationDecision.source
@@ -1284,7 +1303,9 @@ extension SmartParkingStore: CBCentralManagerDelegate {
     }
 }
 
-private final class ParkingSequenceLogger {
+final class ParkingSequenceLogger {
+    static let shared = ParkingSequenceLogger()
+
     let fileURL: URL
     private let formatter: ISO8601DateFormatter
 

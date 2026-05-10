@@ -25,6 +25,7 @@ struct SizedMap<Content: MapContent>: View {
             Group {
                 if hasUsableSize && shouldRenderMap {
                     Map(position: $position, content: content)
+                        .mapControlVisibility(.hidden)
                         .onMapCameraChange { context in
                             onMapCameraChange?(context)
                         }

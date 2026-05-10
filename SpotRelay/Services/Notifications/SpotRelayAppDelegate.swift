@@ -84,6 +84,12 @@ extension SpotRelayAppDelegate: UNUserNotificationCenterDelegate {
         }
         #endif
 
+        if Self.isParkingReminderNotification(userInfo) {
+            ParkingSequenceLogger.shared.append(
+                "Return notification will present: id=\(notification.request.identifier), title=\(notification.request.content.title), trigger=\(userInfo["trigger"] as? String ?? "unknown")"
+            )
+        }
+
         PushNotificationStore.shared.handleForegroundNotification(userInfo: userInfo)
         completionHandler([.banner, .list, .sound, .badge])
     }
@@ -93,8 +99,22 @@ extension SpotRelayAppDelegate: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        PushNotificationStore.shared.handleNotificationResponse(userInfo: response.notification.request.content.userInfo)
+        let notification = response.notification
+        let userInfo = notification.request.content.userInfo
+        if Self.isParkingReminderNotification(userInfo) {
+            ParkingSequenceLogger.shared.append(
+                "Return notification tapped: id=\(notification.request.identifier), action=\(response.actionIdentifier), trigger=\(userInfo["trigger"] as? String ?? "unknown")"
+            )
+        }
+
+        PushNotificationStore.shared.handleNotificationResponse(userInfo: userInfo)
         completionHandler()
+    }
+}
+
+private extension SpotRelayAppDelegate {
+    static func isParkingReminderNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+        userInfo["type"] as? String == "parking-reminder"
     }
 }
 
