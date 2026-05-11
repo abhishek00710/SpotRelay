@@ -77,6 +77,7 @@ struct ParkingCaptureEngine {
         var stoppedCandidateLocation: CLLocation?
         var lastSpeedMetersPerSecond: CLLocationSpeed?
         var pendingVehicleDisconnectAt: Date?
+        var pendingVehicleDisconnectLocation: CLLocation?
 
         var duration: TimeInterval {
             Date().timeIntervalSince(startedAt)
@@ -158,10 +159,15 @@ struct ParkingCaptureEngine {
         session?.activeVehicleSignals.insert(summary)
         session?.evidence.insert(summary)
         session?.pendingVehicleDisconnectAt = nil
+        session?.pendingVehicleDisconnectLocation = nil
         lastReason = "Vehicle signal connected"
     }
 
-    mutating func vehicleDisconnected(summary: String, at date: Date = .now) -> ParkingCaptureEvent? {
+    mutating func vehicleDisconnected(
+        summary: String,
+        at date: Date = .now,
+        location: CLLocation? = nil
+    ) -> ParkingCaptureEvent? {
         updatedAt = date
         guard var activeSession = session else {
             lastReason = "Vehicle disconnected before a drive session"
@@ -179,6 +185,7 @@ struct ParkingCaptureEngine {
         }
 
         activeSession.pendingVehicleDisconnectAt = date
+        activeSession.pendingVehicleDisconnectLocation = location
         session = activeSession
         lastReason = "Vehicle disconnected: waiting for final stop confirmation"
         return nil
@@ -279,7 +286,8 @@ struct ParkingCaptureEngine {
                 stoppedSince: nil,
                 stoppedCandidateLocation: nil,
                 lastSpeedMetersPerSecond: nil,
-                pendingVehicleDisconnectAt: nil
+                pendingVehicleDisconnectAt: nil,
+                pendingVehicleDisconnectLocation: nil
             )
         } else {
             session?.evidence.insert(evidence)
@@ -318,6 +326,7 @@ struct ParkingCaptureEngine {
             if let disconnectAt = session?.pendingVehicleDisconnectAt,
                location.timestamp > disconnectAt {
                 session?.pendingVehicleDisconnectAt = nil
+                session?.pendingVehicleDisconnectLocation = nil
                 lastReason = "Ignoring vehicle disconnect: driving resumed"
             }
             session?.lastMovingAt = location.timestamp
@@ -416,6 +425,7 @@ struct ParkingCaptureEngine {
                stoppedSince > disconnectAt,
                stoppedSince.timeIntervalSince(disconnectAt) > Self.disconnectStopConfirmationWindow {
                 activeSession.pendingVehicleDisconnectAt = nil
+                activeSession.pendingVehicleDisconnectLocation = nil
                 session = activeSession
                 lastReason = "Ignoring stale vehicle disconnect: stop happened too late"
             } else {
@@ -515,7 +525,12 @@ struct ParkingCaptureEngine {
         selectionEnd: Date,
         source: ParkingCaptureEvent.Source
     ) -> LocationSelection? {
-        let earliest = parkedAt.addingTimeInterval(-Self.parkingWindowBeforeEvent)
+        let earliest: Date
+        if source == .vehicleDisconnect {
+            earliest = parkedAt.addingTimeInterval(-Self.disconnectPreStopConfirmationWindow)
+        } else {
+            earliest = parkedAt.addingTimeInterval(-Self.parkingWindowBeforeEvent)
+        }
         let latest: Date
         if source == .vehicleDisconnect {
             latest = min(selectionEnd, parkedAt.addingTimeInterval(Self.vehicleDisconnectSettleDelay))
@@ -526,11 +541,19 @@ struct ParkingCaptureEngine {
             )
         }
         let vehicleDisconnectAnchor = source == .vehicleDisconnect
-            ? bestVehicleDisconnectAnchor(from: session, disconnectAt: parkedAt)
+            ? (session.pendingVehicleDisconnectLocation ?? bestVehicleDisconnectAnchor(from: session, disconnectAt: parkedAt))
             : nil
 
-        let candidates = session.samples
-            .map(\.location)
+        var candidatePool = session.samples.map(\.location)
+        if source == .vehicleDisconnect,
+           let disconnectLocation = session.pendingVehicleDisconnectLocation,
+           disconnectLocation.horizontalAccuracy >= 0,
+           disconnectLocation.horizontalAccuracy <= Self.maximumParkingAccuracyMeters,
+           abs(disconnectLocation.timestamp.timeIntervalSince(parkedAt)) <= Self.vehicleDisconnectSettleDelay {
+            candidatePool.append(disconnectLocation)
+        }
+
+        let candidates = candidatePool
             .filter { location in
                 guard location.horizontalAccuracy >= 0 else { return false }
                 guard location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else { return false }

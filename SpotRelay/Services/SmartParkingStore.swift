@@ -617,7 +617,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         isPhoneChargingDriveSignalActive = false
         parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: false))
         locationManager.startUpdatingLocation()
-        if let event = parkingCaptureEngine.vehicleDisconnected(summary: "vehicle-signal:phone-charging") {
+        if let event = parkingCaptureEngine.vehicleDisconnected(
+            summary: "vehicle-signal:phone-charging",
+            location: locationManager.location
+        ) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             Task {
                 await processParkingCaptureEvent(event)
@@ -919,7 +922,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
             if let disconnectedRecord = vehicleSignalRecord(for: previousOutputs) {
                 parkingSequenceLogger.append("Audio route disconnected: \(disconnectedRecord.source.rawValue) \(disconnectedRecord.routeName ?? "")")
                 if !activeVehicleSignals.contains(disconnectedRecord.source) {
-                    if let event = parkingCaptureEngine.vehicleDisconnected(summary: disconnectedRecord.source.captureToken) {
+                    if let event = parkingCaptureEngine.vehicleDisconnected(
+                        summary: disconnectedRecord.source.captureToken,
+                        location: locationManager.location
+                    ) {
                         parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                         Task {
                             await processParkingCaptureEvent(event)
@@ -1002,7 +1008,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         for source in removed.sorted(by: { $0.priority > $1.priority }) {
             parkingSequenceLogger.append(vehicleSignalLocationLogLine(source: source, isConnected: false))
             parkingSequenceLogger.append("Vehicle signal removed: \(source.rawValue)")
-            if let event = parkingCaptureEngine.vehicleDisconnected(summary: source.captureToken) {
+            if let event = parkingCaptureEngine.vehicleDisconnected(
+                summary: source.captureToken,
+                location: locationManager.location
+            ) {
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
                 Task {
                     await processParkingCaptureEvent(event)
