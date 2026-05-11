@@ -2,6 +2,7 @@ import Combine
 import CoreLocation
 import Foundation
 import UserNotifications
+import UIKit
 
 @MainActor
 final class ParkingReminderStore: NSObject, ObservableObject {
@@ -132,6 +133,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
     nonisolated private static let nudgedSessionDuplicateDistanceMeters: CLLocationDistance = 35
     nonisolated private static let nudgedSessionDuplicateTimeWindow: TimeInterval = 12 * 60 * 60
+    nonisolated private static let vehicleConnectionNotificationLeadTime: TimeInterval = 3
 
     @Published private(set) var activeReminder: Reminder?
     @Published private(set) var savedParkedLocation: Reminder?
@@ -489,15 +491,23 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         let request = UNNotificationRequest(
             identifier: Keys.notificationIdentifier,
             content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            trigger: UNTimeIntervalNotificationTrigger(
+                timeInterval: Self.vehicleConnectionNotificationLeadTime,
+                repeats: false
+            )
         )
 
+        let appState = Self.applicationStateSummary
+        ParkingSequenceLogger.shared.append(
+            "Return notification preparing: id=\(Keys.notificationIdentifier), trigger=\(triggerSummary), appState=\(appState), reminderAge=\(Int(Date().timeIntervalSince(reminder.createdAt).rounded()))s"
+        )
         center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
         center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
         do {
             try await center.add(request)
+            let pendingDescription = await pendingNotificationDescription(for: Keys.notificationIdentifier)
             ParkingSequenceLogger.shared.append(
-                "Return notification add succeeded: id=\(Keys.notificationIdentifier), title=\(content.title), trigger=\(triggerSummary), area=\(reminder.areaLabel ?? "unknown area")"
+                "Return notification add succeeded: id=\(Keys.notificationIdentifier), title=\(content.title), trigger=\(triggerSummary), area=\(reminder.areaLabel ?? "unknown area"), appState=\(appState), fireIn=\(Int(Self.vehicleConnectionNotificationLeadTime))s, pending=\(pendingDescription)"
             )
             persist(reminder, key: Keys.lastNudgedReminder)
             lastNudgedReminder = reminder
@@ -527,12 +537,71 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         stopMonitoringReminderRegion()
         locationManager.stopMonitoringSignificantLocationChanges()
         if !preservingNotification {
+            Task { @MainActor in
+                let pendingDescription = await pendingNotificationDescription(for: Keys.notificationIdentifier)
+                let deliveredCount = await deliveredNotificationCount(for: Keys.notificationIdentifier)
+                ParkingSequenceLogger.shared.append(
+                    "Return notification clearing: id=\(Keys.notificationIdentifier), pending=\(pendingDescription), deliveredCount=\(deliveredCount)"
+                )
+            }
             center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
             center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
         }
         defaults.removeObject(forKey: Keys.activeReminder)
         defaults.removeObject(forKey: Keys.hasExitedRegion)
         activeReminder = nil
+    }
+
+    private func pendingNotificationDescription(for identifier: String) async -> String {
+        let requests = await pendingNotificationRequests()
+        guard let request = requests.first(where: { $0.identifier == identifier }) else {
+            return "none"
+        }
+
+        if let trigger = request.trigger as? UNTimeIntervalNotificationTrigger {
+            return "timeInterval:\(Int(trigger.timeInterval.rounded()))s repeats=\(trigger.repeats)"
+        }
+        if request.trigger is UNLocationNotificationTrigger {
+            return "location"
+        }
+        if request.trigger is UNCalendarNotificationTrigger {
+            return "calendar"
+        }
+        return request.trigger == nil ? "immediate" : "other"
+    }
+
+    private func deliveredNotificationCount(for identifier: String) async -> Int {
+        let notifications = await deliveredNotifications()
+        return notifications.filter { $0.request.identifier == identifier }.count
+    }
+
+    private func pendingNotificationRequests() async -> [UNNotificationRequest] {
+        await withCheckedContinuation { continuation in
+            center.getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests)
+            }
+        }
+    }
+
+    private func deliveredNotifications() async -> [UNNotification] {
+        await withCheckedContinuation { continuation in
+            center.getDeliveredNotifications { notifications in
+                continuation.resume(returning: notifications)
+            }
+        }
+    }
+
+    private static var applicationStateSummary: String {
+        switch UIApplication.shared.applicationState {
+        case .active:
+            return "active"
+        case .inactive:
+            return "inactive"
+        case .background:
+            return "background"
+        @unknown default:
+            return "unknown"
+        }
     }
 
     private func persist(_ reminder: Reminder, key: String) {
