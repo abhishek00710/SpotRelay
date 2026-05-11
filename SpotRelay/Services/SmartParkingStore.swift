@@ -584,6 +584,20 @@ final class SmartParkingStore: NSObject, ObservableObject {
         parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: true))
         parkingCaptureEngine.vehicleConnected(summary: "vehicle-signal:phone-charging")
         parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+        if let latestLocation = locationManager.location {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let outcome = await self.parkingReminderStore.handleVehicleConnectionNearParkedCar(
+                    sourceSummary: L10n.tr("phone charging"),
+                    location: latestLocation
+                )
+                if self.shouldLogVehicleConnectionReminderOutcomeFromLocation(outcome) {
+                    self.parkingSequenceLogger.append(
+                        "Vehicle connection reminder check: source=phoneCharging, outcome=\(self.vehicleConnectionReminderOutcomeSummary(outcome))"
+                    )
+                }
+            }
+        }
     }
 
     private var hasQualifiedDriveForPhoneCharging: Bool {
