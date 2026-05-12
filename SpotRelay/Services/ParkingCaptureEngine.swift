@@ -166,7 +166,8 @@ struct ParkingCaptureEngine {
     mutating func vehicleDisconnected(
         summary: String,
         at date: Date = .now,
-        location: CLLocation? = nil
+        location: CLLocation? = nil,
+        allowingRemainingActiveSignals allowedRemainingActiveSignals: Set<String> = []
     ) -> ParkingCaptureEvent? {
         updatedAt = date
         guard var activeSession = session else {
@@ -178,6 +179,18 @@ struct ParkingCaptureEngine {
         activeSession.activeVehicleSignals.remove(summary)
         activeSession.evidence.insert(summary)
         activeSession.evidence.insert("vehicle disconnected")
+        if !activeSession.activeVehicleSignals.isEmpty {
+            guard !allowedRemainingActiveSignals.isEmpty,
+                  activeSession.activeVehicleSignals.isSubset(of: allowedRemainingActiveSignals) else {
+                session = activeSession
+                lastReason = "One vehicle signal disconnected, but another is still active"
+                return nil
+            }
+
+            activeSession.evidence.insert("lingering vehicle signal ignored")
+            activeSession.activeVehicleSignals.subtract(allowedRemainingActiveSignals)
+        }
+
         guard activeSession.activeVehicleSignals.isEmpty else {
             session = activeSession
             lastReason = "One vehicle signal disconnected, but another is still active"

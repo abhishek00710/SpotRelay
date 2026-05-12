@@ -630,10 +630,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
         isPhoneChargingDriveSignalActive = false
         parkingSequenceLogger.append(phoneChargingLocationLogLine(isConnected: false))
+        if activeVehicleSignals == [.coreBluetoothVehicle] {
+            parkingSequenceLogger.append("Phone charging disconnect will ignore lingering CoreBluetooth vehicle signal")
+        }
         locationManager.startUpdatingLocation()
         if let event = parkingCaptureEngine.vehicleDisconnected(
             summary: "vehicle-signal:phone-charging",
-            location: locationManager.location
+            location: locationManager.location,
+            allowingRemainingActiveSignals: [VehicleSignalSource.coreBluetoothVehicle.captureToken]
         ) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
             Task {
