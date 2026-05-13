@@ -116,6 +116,7 @@ struct ParkingCaptureEngine {
     private static let disconnectPreStopConfirmationWindow: TimeInterval = 45
     private static let disconnectStopConfirmationWindow: TimeInterval = 75
     private static let vehicleDisconnectSettleDelay: TimeInterval = 15
+    private static let preciseVehicleDisconnectAccuracyMeters: CLLocationAccuracy = 12
     private static let vehicleDisconnectRefinementRadiusMeters: CLLocationDistance = 18
     private static let stoppedDwellDuration: TimeInterval = 90
     private static let minimumDriveDuration: TimeInterval = 2 * 60
@@ -198,7 +199,7 @@ struct ParkingCaptureEngine {
         }
 
         activeSession.pendingVehicleDisconnectAt = date
-        activeSession.pendingVehicleDisconnectLocation = location
+        activeSession.pendingVehicleDisconnectLocation = normalizedDisconnectLocation(location, at: date)
         session = activeSession
         lastReason = "Vehicle disconnected: waiting for final stop confirmation"
         return nil
@@ -461,6 +462,12 @@ struct ParkingCaptureEngine {
     }
 
     private func confirmedStoppedParkedAt(for session: Session, disconnectAt: Date) -> Date? {
+        if let disconnectLocation = session.pendingVehicleDisconnectLocation,
+           disconnectLocation.horizontalAccuracy >= 0,
+           disconnectLocation.horizontalAccuracy <= Self.preciseVehicleDisconnectAccuracyMeters {
+            return disconnectAt
+        }
+
         guard let stoppedSince = session.stoppedSince else { return nil }
 
         if stoppedSince < disconnectAt,
@@ -484,6 +491,24 @@ struct ParkingCaptureEngine {
         }
 
         return stoppedSince
+    }
+
+    private func normalizedDisconnectLocation(_ location: CLLocation?, at date: Date) -> CLLocation? {
+        guard let location else { return nil }
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= Self.maximumParkingAccuracyMeters else {
+            return nil
+        }
+
+        // LocationManager can hand us an accurate-but-old fix at disconnect time.
+        // Keep the coordinate and accuracy, but anchor it to the disconnect moment.
+        return CLLocation(
+            coordinate: location.coordinate,
+            altitude: location.altitude,
+            horizontalAccuracy: location.horizontalAccuracy,
+            verticalAccuracy: location.verticalAccuracy,
+            timestamp: date
+        )
     }
 
     private mutating func finalize(
