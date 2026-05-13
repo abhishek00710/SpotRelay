@@ -1091,7 +1091,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func shouldLogVehicleConnectionReminderOutcomeFromLocation(_ outcome: ParkingReminderStore.VehicleConnectionReminderOutcome) -> Bool {
         switch outcome {
-        case .alreadyNudged, .failed, .notificationsDisabled, .scheduled, .waitingForUsableLocation:
+        case .alreadyNudged, .autoRelayEnabled, .failed, .notificationsDisabled, .scheduled, .waitingForUsableLocation:
             return true
         case .noActiveReminder, .outsideReturnDistance, .waitingForExitOrAge:
             return false
@@ -1114,6 +1114,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
             return "notifications disabled"
         case .scheduled:
             return "notification scheduled"
+        case .autoRelayEnabled:
+            return "notification skipped because Auto Relay is enabled"
         case .failed:
             return "notification failed"
         }

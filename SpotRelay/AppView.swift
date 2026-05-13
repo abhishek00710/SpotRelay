@@ -115,9 +115,13 @@ struct AppView: View {
         .onChange(of: pushNotificationStore.parkingReminderTapRequest?.id) { _, _ in
             presentParkingReminderShareSheetIfNeeded()
         }
+        .onChange(of: parkingReminderStore.autoRelayShareRequest?.id) { _, _ in
+            processAutoRelayShareRequestIfNeeded()
+        }
         .onChange(of: session.hasCompletedOnboarding) { _, completedOnboarding in
             guard completedOnboarding else { return }
             presentParkingReminderShareSheetIfNeeded()
+            processAutoRelayShareRequestIfNeeded()
         }
         .task {
             spotStore.prepareLocationTracking(requestIfNeeded: false)
@@ -126,6 +130,7 @@ struct AppView: View {
             await pushNotificationStore.refreshAuthorizationStatus()
             pushNotificationStore.registerForRemoteNotificationsIfAuthorized()
             presentParkingReminderShareSheetIfNeeded()
+            processAutoRelayShareRequestIfNeeded()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
@@ -134,6 +139,7 @@ struct AppView: View {
                 smartParkingStore.refreshPermissions()
                 await pushNotificationStore.refreshAuthorizationStatus()
                 pushNotificationStore.registerForRemoteNotificationsIfAuthorized()
+                processAutoRelayShareRequestIfNeeded()
             }
         }
     }
@@ -177,6 +183,19 @@ struct AppView: View {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
             showingPostSpotFlow = true
+        }
+    }
+
+    private func processAutoRelayShareRequestIfNeeded() {
+        guard session.hasCompletedOnboarding else { return }
+        guard let request = parkingReminderStore.autoRelayShareRequest else { return }
+
+        parkingReminderStore.consumeAutoRelayShareRequest(request)
+        Task {
+            _ = await spotStore.postAutoRelaySpot(
+                from: request.reminder,
+                reason: request.reason
+            )
         }
     }
 

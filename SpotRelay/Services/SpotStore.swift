@@ -237,6 +237,50 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     @discardableResult
+    func postAutoRelaySpot(
+        from reminder: ParkingReminderStore.Reminder,
+        durationMinutes: Int = 5,
+        reason: String
+    ) async -> Bool {
+        guard isNetworkAvailable else {
+            ParkingSequenceLogger.shared.append("Auto Relay share skipped: offline")
+            return false
+        }
+        guard !(backendMode.isFirebase && currentUser.id == firebasePendingUserID) else {
+            ParkingSequenceLogger.shared.append("Auto Relay share skipped: Firebase user session still connecting")
+            return false
+        }
+
+        if let leavingSignal = currentUserLeavingSignal {
+            activeHandoffID = leavingSignal.id
+            ParkingSequenceLogger.shared.append(
+                "Auto Relay share skipped: existing live handoff id=\(leavingSignal.id)"
+            )
+            return false
+        }
+
+        do {
+            let signal = try await repository.postSpot(
+                createdBy: currentUser.id,
+                coordinate: reminder.coordinate,
+                durationMinutes: durationMinutes,
+                now: .now
+            )
+            activeHandoffID = signal.id
+            clearErrorBanner()
+            ParkingSequenceLogger.shared.append(
+                "Auto Relay shared parked spot: id=\(signal.id), reason=\(reason), duration=\(durationMinutes)m, lat=\(reminder.latitude), lon=\(reminder.longitude), area=\(reminder.areaLabel ?? "unknown area")"
+            )
+            return true
+        } catch {
+            ParkingSequenceLogger.shared.append(
+                "Auto Relay share failed: reason=\(reason), error=\(userFacingMessage(for: error, fallback: error.localizedDescription))"
+            )
+            return false
+        }
+    }
+
+    @discardableResult
     func claimSpot(id: String) async -> Bool {
         guard ensureReadyForMutation() else { return false }
         do {

@@ -36,6 +36,13 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         }
     }
 
+    struct AutoRelayShareRequest: Identifiable, Equatable {
+        let id = UUID()
+        let reminder: Reminder
+        let requestedAt: Date
+        let reason: String
+    }
+
     enum Error: LocalizedError {
         case locationAuthorizationRequired
         case regionMonitoringUnavailable
@@ -56,6 +63,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         case exitedWaitingForReturn
         case nearCarWaitingForVehicleConnection
         case notificationScheduled
+        case autoRelayWaitingForPickup
         case pausedNeedsAlwaysLocation
         case monitoringUnavailable
         case notificationsDisabled
@@ -72,6 +80,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Near parked car")
             case .notificationScheduled:
                 return L10n.tr("Return notification scheduled")
+            case .autoRelayWaitingForPickup:
+                return L10n.tr("Auto Relay ready")
             case .pausedNeedsAlwaysLocation:
                 return L10n.tr("Reminder paused")
             case .monitoringUnavailable:
@@ -93,6 +103,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
                 return L10n.tr("Waiting for CarPlay or car Bluetooth before nudging.")
             case .notificationScheduled:
                 return L10n.tr("SpotRelay detected your return and queued the local notification.")
+            case .autoRelayWaitingForPickup:
+                return L10n.tr("SpotRelay detected your return and will auto-share once you start driving away.")
             case .pausedNeedsAlwaysLocation:
                 return L10n.tr("Always location is required for the parked-car reminder to keep working.")
             case .monitoringUnavailable:
@@ -115,6 +127,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         case alreadyNudged
         case notificationsDisabled
         case scheduled
+        case autoRelayEnabled
         case failed
     }
 
@@ -139,6 +152,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     @Published private(set) var savedParkedLocation: Reminder?
     @Published private(set) var parkedLocationHistory: [Reminder]
     @Published private(set) var debugState: DebugState
+    @Published private(set) var isAutoRelayEnabled: Bool
+    @Published private(set) var autoRelayShareRequest: AutoRelayShareRequest?
 
     private let center: UNUserNotificationCenter
     private let defaults: UserDefaults
@@ -152,6 +167,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         static let lastNudgedReminder = "parkingReminder.lastNudgedReminder"
         static let hasExitedRegion = "parkingReminder.hasExitedRegion"
         static let debugState = "parkingReminder.debugState"
+        static let autoRelayEnabled = "parkingReminder.autoRelayEnabled"
         nonisolated static let regionIdentifier = "parkingReminder.returnToCar.region"
         static let notificationIdentifier = "parkingReminder.returnToCar.notification"
     }
@@ -168,6 +184,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         self.savedParkedLocation = Self.loadReminder(from: defaults, key: Keys.savedParkedLocation)
         self.parkedLocationHistory = Self.loadReminderHistory(from: defaults)
         self.lastNudgedReminder = Self.loadReminder(from: defaults, key: Keys.lastNudgedReminder)
+        self.isAutoRelayEnabled = defaults.bool(forKey: Keys.autoRelayEnabled)
         self.debugState = Self.loadDebugState(from: defaults)
             ?? Self.derivedDebugState(
                 activeReminder: Self.loadReminder(from: defaults, key: Keys.activeReminder),
@@ -248,11 +265,25 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     @discardableResult
     func retireCurrentParkedSpotForDriving() -> Bool {
         guard activeReminder != nil || savedParkedLocation != nil else { return false }
+        let retiringReminder = savedParkedLocation ?? activeReminder
         clearActiveReminderOnly()
         defaults.removeObject(forKey: Keys.savedParkedLocation)
         savedParkedLocation = nil
         updateDebugState(.noReminder)
+        handleAutoRelayAfterPickup(for: retiringReminder)
         return true
+    }
+
+    func setAutoRelayEnabled(_ isEnabled: Bool) {
+        guard isAutoRelayEnabled != isEnabled else { return }
+        isAutoRelayEnabled = isEnabled
+        defaults.set(isEnabled, forKey: Keys.autoRelayEnabled)
+        ParkingSequenceLogger.shared.append("Auto Relay consent \(isEnabled ? "enabled" : "disabled")")
+    }
+
+    func consumeAutoRelayShareRequest(_ request: AutoRelayShareRequest) {
+        guard autoRelayShareRequest?.id == request.id else { return }
+        autoRelayShareRequest = nil
     }
 
     @discardableResult
@@ -370,7 +401,8 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         guard let reminder = activeReminder else {
             stopMonitoringReminderRegion()
             locationManager.stopMonitoringSignificantLocationChanges()
-            if debugState != .notificationScheduled {
+            if debugState != .notificationScheduled,
+               debugState != .autoRelayWaitingForPickup {
                 updateDebugState(.noReminder)
             }
             return
@@ -458,6 +490,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         for reminder: Reminder,
         triggerSummary: String
     ) async -> VehicleConnectionReminderOutcome {
+        guard !isAutoRelayEnabled else {
+            ParkingSequenceLogger.shared.append(
+                "Return notification skipped: Auto Relay enabled, trigger=\(triggerSummary), area=\(reminder.areaLabel ?? "unknown area")"
+            )
+            updateDebugState(.autoRelayWaitingForPickup)
+            clearActiveReminderOnly(preservingNotification: true)
+            return .autoRelayEnabled
+        }
+
         guard !hasAlreadyNudgedForSameSession(reminder) else {
             updateDebugState(.notificationScheduled)
             clearActiveReminderOnly(preservingNotification: true)
@@ -498,6 +539,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         )
 
         let appState = Self.applicationStateSummary
+        let scheduledAt = Date()
         ParkingSequenceLogger.shared.append(
             "Return notification preparing: id=\(Keys.notificationIdentifier), trigger=\(triggerSummary), appState=\(appState), reminderAge=\(Int(Date().timeIntervalSince(reminder.createdAt).rounded()))s"
         )
@@ -508,6 +550,12 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             let pendingDescription = await pendingNotificationDescription(for: Keys.notificationIdentifier)
             ParkingSequenceLogger.shared.append(
                 "Return notification add succeeded: id=\(Keys.notificationIdentifier), title=\(content.title), trigger=\(triggerSummary), area=\(reminder.areaLabel ?? "unknown area"), appState=\(appState), fireIn=\(Int(Self.vehicleConnectionNotificationLeadTime))s, pending=\(pendingDescription)"
+            )
+            scheduleReturnNotificationDeliveryCheck(
+                triggerSummary: triggerSummary,
+                areaLabel: reminder.areaLabel,
+                scheduledAt: scheduledAt,
+                appStateAtSchedule: appState
             )
             persist(reminder, key: Keys.lastNudgedReminder)
             lastNudgedReminder = reminder
@@ -523,6 +571,44 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             #endif
             return .failed
         }
+    }
+
+    private func scheduleReturnNotificationDeliveryCheck(
+        triggerSummary: String,
+        areaLabel: String?,
+        scheduledAt: Date,
+        appStateAtSchedule: String
+    ) {
+        let checkDelay = Self.vehicleConnectionNotificationLeadTime + 5
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(checkDelay * 1_000_000_000))
+
+            let pendingDescription = await pendingNotificationDescription(for: Keys.notificationIdentifier)
+            let deliveredCount = await deliveredNotificationCount(for: Keys.notificationIdentifier)
+            let settings = await center.notificationSettings()
+            ParkingSequenceLogger.shared.append(
+                "Return notification delivery check: id=\(Keys.notificationIdentifier), trigger=\(triggerSummary), area=\(areaLabel ?? "unknown area"), appStateAtSchedule=\(appStateAtSchedule), appStateNow=\(Self.applicationStateSummary), checkedAfter=\(Int(Date().timeIntervalSince(scheduledAt).rounded()))s, pending=\(pendingDescription), deliveredCount=\(deliveredCount), authorizationStatus=\(settings.authorizationStatus.rawValue), debugState=\(debugState.rawValue)"
+            )
+        }
+    }
+
+    private func handleAutoRelayAfterPickup(for reminder: Reminder?) {
+        guard let reminder else { return }
+        guard isAutoRelayEnabled else {
+            ParkingSequenceLogger.shared.append(
+                "Auto Relay skipped: opt-in disabled for parked spot near \(reminder.areaLabel ?? "unknown area")"
+            )
+            return
+        }
+
+        autoRelayShareRequest = AutoRelayShareRequest(
+            reminder: reminder,
+            requestedAt: .now,
+            reason: "pickup driving detected"
+        )
+        ParkingSequenceLogger.shared.append(
+            "Auto Relay request created: reason=pickup driving detected, lat=\(reminder.latitude), lon=\(reminder.longitude), area=\(reminder.areaLabel ?? "unknown area")"
+        )
     }
 
     private var hasExitedRegion: Bool {

@@ -1325,6 +1325,8 @@ struct HomeView: View {
             return "car.side.and.exclamationmark.fill"
         case .notificationScheduled:
             return "bell.badge.fill"
+        case .autoRelayWaitingForPickup:
+            return "sparkles"
         case .pausedNeedsAlwaysLocation:
             return "location.slash.circle.fill"
         case .monitoringUnavailable:
@@ -1346,6 +1348,8 @@ struct HomeView: View {
             return SpotRelayTheme.accent
         case .notificationScheduled:
             return SpotRelayTheme.warning
+        case .autoRelayWaitingForPickup:
+            return SpotRelayTheme.primary
         case .pausedNeedsAlwaysLocation, .monitoringUnavailable, .notificationsDisabled:
             return SpotRelayTheme.warning
         }
@@ -2007,6 +2011,7 @@ private struct ParkedLocationDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
                     detailPanel
+                    autoRelayPanel
                     directionsPanel
                     historyPanel
                     controlsPanel
@@ -2134,6 +2139,60 @@ private struct ParkedLocationDetailView: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .padding(20)
+        .glassPanel(
+            cornerRadius: 28,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+
+    private var autoRelayPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Toggle(
+                isOn: Binding(
+                    get: { parkingReminderStore.isAutoRelayEnabled },
+                    set: { parkingReminderStore.setAutoRelayEnabled($0) }
+                )
+            ) {
+                HStack(alignment: .top, spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(SpotRelayTheme.primary.opacity(0.16))
+                            .frame(width: 42, height: 42)
+
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(SpotRelayTheme.primary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Auto Relay")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                        Text("After you get back in the car and start driving away, SpotRelay can automatically share this saved spot for nearby drivers.")
+                            .font(.subheadline)
+                            .foregroundStyle(SpotRelayTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+
+            HStack(spacing: 10) {
+                badge(text: parkingReminderStore.isAutoRelayEnabled ? "Auto-share on" : "Opt-in only")
+                badge(text: "5 min live")
+            }
+
+            Text("Nothing is shared unless this is enabled. You can turn it off anytime, and manual sharing still works the same way.")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(SpotRelayTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         .padding(20)
         .glassPanel(
             cornerRadius: 28,
