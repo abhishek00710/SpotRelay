@@ -1002,13 +1002,41 @@ struct HomeView: View {
             guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
             let items = try await request.mapItems
             let mapItem = items.first
-            return mapItem?.addressRepresentations?.cityName
+            return preciseParkingPlaceLabel(for: mapItem)
                 ?? mapItem?.addressRepresentations?.cityWithContext
-                ?? mapItem?.address?.shortAddress
-                ?? mapItem?.name?.components(separatedBy: ",").first
+                ?? mapItem?.addressRepresentations?.cityName
         } catch {
             return nil
         }
+    }
+
+    private func preciseParkingPlaceLabel(for mapItem: MKMapItem?) -> String? {
+        let name = normalizedParkingPlaceComponent(mapItem?.name)
+        let address = normalizedParkingPlaceComponent(mapItem?.address?.shortAddress)
+
+        if let name, let address {
+            if address.localizedCaseInsensitiveContains(name) {
+                return address
+            }
+
+            if name.localizedCaseInsensitiveContains(address) {
+                return name
+            }
+
+            return "\(name), \(address)"
+        }
+
+        return address ?? name
+    }
+
+    private func normalizedParkingPlaceComponent(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value
+            .components(separatedBy: ",")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty, trimmed != "Nearby" else { return nil }
+        return trimmed
     }
 
     private func setCameraPosition(_ position: MapCameraPosition, animated: Bool) {
@@ -1976,6 +2004,7 @@ private struct ParkedLocationDetailView: View {
     @State private var isSavedDetailsExpanded = false
     @State private var isHistoryExpanded = false
     @State private var isShowingParkingLogShareSheet = false
+    @State private var resolvedHistoryPlaceLabels: [Date: String] = [:]
 
     private var reminder: ParkingReminderStore.Reminder {
         parkingReminderStore.latestRememberedParkedLocation ?? initialReminder
@@ -1983,6 +2012,37 @@ private struct ParkedLocationDetailView: View {
 
     private var history: [ParkingReminderStore.Reminder] {
         parkingReminderStore.parkedLocationHistory
+    }
+
+    private struct HistorySection: Identifiable {
+        let id: Date
+        let title: String
+        let reminders: [ParkingReminderStore.Reminder]
+    }
+
+    private var historySections: [HistorySection] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: history) { reminder in
+            calendar.startOfDay(for: reminder.createdAt)
+        }
+
+        return grouped.keys
+            .sorted(by: >)
+            .map { day in
+                HistorySection(
+                    id: day,
+                    title: historySectionTitle(for: day, calendar: calendar),
+                    reminders: (grouped[day] ?? []).sorted { $0.createdAt > $1.createdAt }
+                )
+            }
+    }
+
+    private var historyResolutionToken: String {
+        ([reminder] + history)
+            .map { reminder in
+                "\(reminder.createdAt.timeIntervalSince1970):\(reminder.latitude):\(reminder.longitude)"
+            }
+            .joined(separator: "|")
     }
 
     private var statusTitle: String {
@@ -2003,6 +2063,18 @@ private struct ParkedLocationDetailView: View {
 
     private var savedAbsoluteText: String {
         reminder.createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func historySectionTitle(for day: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(day) {
+            return L10n.tr("Today")
+        }
+
+        if calendar.isDateInYesterday(day) {
+            return L10n.tr("Yesterday")
+        }
+
+        return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day().year())
     }
 
     var body: some View {
@@ -2030,6 +2102,9 @@ private struct ParkedLocationDetailView: View {
             .sheet(isPresented: $isShowingParkingLogShareSheet) {
                 ActivityView(activityItems: [smartParkingStore.parkingLogFileURL])
             }
+            .task(id: historyResolutionToken) {
+                await resolveHistoryPlaceLabels()
+            }
         }
     }
 
@@ -2042,7 +2117,7 @@ private struct ParkedLocationDetailView: View {
                     .tracking(1.2)
                     .foregroundStyle(SpotRelayTheme.badgeText)
 
-                Text(reminder.areaLabel ?? "Saved parking spot")
+                Text(parkingPlaceTitle(for: reminder))
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(SpotRelayTheme.textPrimary)
 
@@ -2125,7 +2200,7 @@ private struct ParkedLocationDetailView: View {
                         icon: "location.circle.fill",
                         title: "Reminder status",
                         value: statusTitle,
-                        subtitle: reminder.areaSummary
+                        subtitle: parkingPlaceSummary(for: reminder)
                     )
 
                     HStack(spacing: 10) {
@@ -2281,9 +2356,24 @@ private struct ParkedLocationDetailView: View {
             }
             
             if isHistoryExpanded {
-                VStack(spacing: 12) {
-                    ForEach(Array(history.enumerated()), id: \.element.createdAt) { index, historyReminder in
-                        historyRow(reminder: historyReminder, isCurrent: index == 0 && parkingReminderStore.savedParkedLocation != nil)
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(historySections) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(section.title)
+                                .font(.caption.weight(.bold))
+                                .textCase(.uppercase)
+                                .tracking(0.8)
+                                .foregroundStyle(SpotRelayTheme.textSecondary)
+
+                            VStack(spacing: 12) {
+                                ForEach(section.reminders, id: \.createdAt) { historyReminder in
+                                    historyRow(
+                                        reminder: historyReminder,
+                                        isCurrent: historyReminder == parkingReminderStore.savedParkedLocation
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2455,6 +2545,86 @@ private struct ParkedLocationDetailView: View {
             .foregroundStyle(SpotRelayTheme.badgeText)
     }
 
+    private func parkingPlaceTitle(for reminder: ParkingReminderStore.Reminder) -> String {
+        if let resolvedLabel = resolvedHistoryPlaceLabels[reminder.createdAt],
+           !resolvedLabel.isEmpty {
+            return resolvedLabel
+        }
+
+        guard let areaLabel = reminder.areaLabel, !areaLabel.isEmpty else {
+            return L10n.tr("Saved parking spot")
+        }
+
+        return areaLabel
+    }
+
+    private func parkingPlaceSummary(for reminder: ParkingReminderStore.Reminder) -> String {
+        let title = parkingPlaceTitle(for: reminder)
+        guard title != L10n.tr("Saved parking spot") else {
+            return L10n.tr("Saved parked location")
+        }
+
+        return L10n.format("Parked near %@", title)
+    }
+
+    private func resolveHistoryPlaceLabels() async {
+        var nextLabels = resolvedHistoryPlaceLabels
+        let reminders = ([reminder] + history).reduce(into: [Date: ParkingReminderStore.Reminder]()) { partialResult, reminder in
+            partialResult[reminder.createdAt] = reminder
+        }
+
+        for (createdAt, reminder) in reminders where nextLabels[createdAt] == nil {
+            if let label = await reverseGeocodedParkingPlaceLabel(for: reminder.coordinate) {
+                nextLabels[createdAt] = label
+            }
+        }
+
+        resolvedHistoryPlaceLabels = nextLabels
+    }
+
+    private func reverseGeocodedParkingPlaceLabel(for coordinate: CLLocationCoordinate2D) async -> String? {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        do {
+            guard let request = MKReverseGeocodingRequest(location: location) else { return nil }
+            let items = try await request.mapItems
+            let mapItem = items.first
+            return preciseParkingPlaceLabel(for: mapItem)
+                ?? mapItem?.addressRepresentations?.cityWithContext
+                ?? mapItem?.addressRepresentations?.cityName
+        } catch {
+            return nil
+        }
+    }
+
+    private func preciseParkingPlaceLabel(for mapItem: MKMapItem?) -> String? {
+        let name = normalizedParkingPlaceComponent(mapItem?.name)
+        let address = normalizedParkingPlaceComponent(mapItem?.address?.shortAddress)
+
+        if let name, let address {
+            if address.localizedCaseInsensitiveContains(name) {
+                return address
+            }
+
+            if name.localizedCaseInsensitiveContains(address) {
+                return name
+            }
+
+            return "\(name), \(address)"
+        }
+
+        return address ?? name
+    }
+
+    private func normalizedParkingPlaceComponent(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value
+            .components(separatedBy: ",")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let trimmed, !trimmed.isEmpty, trimmed != "Nearby" else { return nil }
+        return trimmed
+    }
+
     private func historyRow(reminder: ParkingReminderStore.Reminder, isCurrent: Bool) -> some View {
         Button {
             onSelectReminder(reminder)
@@ -2473,7 +2643,7 @@ private struct ParkedLocationDetailView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(reminder.areaLabel ?? "Saved parking spot")
+                        Text(parkingPlaceTitle(for: reminder))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(SpotRelayTheme.textPrimary)
 
@@ -2482,11 +2652,11 @@ private struct ParkedLocationDetailView: View {
                         }
                     }
 
-                    Text(reminder.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    Text(reminder.createdAt.formatted(date: .omitted, time: .shortened))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
 
-                    Text(reminder.areaSummary)
+                    Text(parkingPlaceSummary(for: reminder))
                         .font(.caption)
                         .foregroundStyle(SpotRelayTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

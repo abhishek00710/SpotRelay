@@ -19,9 +19,9 @@ final class ParkingReminderStore: NSObject, ObservableObject {
 
         var areaSummary: String {
             guard let areaLabel, !areaLabel.isEmpty, areaLabel != "Nearby" else {
-                return L10n.tr("We'll nudge you when you're back near this parked spot.")
+                return L10n.tr("Saved parked location")
             }
-            return L10n.format("We'll nudge you when you're back near %@.", areaLabel)
+            return L10n.format("Parked near %@", areaLabel)
         }
 
         func coordinateDistanceText(from coordinate: CLLocationCoordinate2D) -> String {

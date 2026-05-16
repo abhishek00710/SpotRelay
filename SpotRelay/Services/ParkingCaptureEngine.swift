@@ -146,6 +146,14 @@ struct ParkingCaptureEngine {
         )
     }
 
+    var hasActiveSession: Bool {
+        session != nil
+    }
+
+    var pendingVehicleDisconnectAt: Date? {
+        session?.pendingVehicleDisconnectAt
+    }
+
     mutating func reset(reason: String = "Reset") {
         session = nil
         recentSamples.removeAll()
@@ -281,6 +289,11 @@ struct ParkingCaptureEngine {
 
         session?.evidence.insert("arrival visit")
         return settleIfQualified(since: visit.arrivalDate, receivedAt: date, source: .visitSettled)
+    }
+
+    mutating func finalizePendingVehicleDisconnect(at date: Date = .now) -> ParkingCaptureEvent? {
+        updatedAt = date
+        return settleFromPendingVehicleDisconnectIfReady(at: date)
     }
 
     private mutating func ensureSession(startedAt: Date, evidence: String) {
