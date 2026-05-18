@@ -202,6 +202,13 @@ struct HomeView: View {
                     }
                 }
 
+                if shouldShowAutoRelayEnableButton {
+                    HStack {
+                        Spacer()
+                        autoRelayMapButton
+                    }
+                }
+
                 if shouldShowNorthUpButton {
                     HStack {
                         Spacer()
@@ -221,6 +228,7 @@ struct HomeView: View {
             }
             .padding(.horizontal, 4)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowNorthUpButton)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowAutoRelayEnableButton)
             Spacer()
             nearbySheetContainer
         }
@@ -250,6 +258,33 @@ struct HomeView: View {
             shadowY: 8
         )
         .accessibilityLabel("Set up smart parking")
+    }
+
+    private var autoRelayMapButton: some View {
+        Button {
+            parkingReminderStore.setAutoRelayEnabled(true)
+            parkingReminderAlert = HomeViewAlert(
+                title: L10n.tr("Auto Relay is on"),
+                message: L10n.tr("When you get back in the car and start driving away, SpotRelay can automatically share your saved parked spot for nearby drivers.")
+            )
+        } label: {
+            HStack{
+                Image(systemName: "sparkles")
+                    .font(.system(size: 14, weight: .bold))
+            }
+            .frame(width: 46, height: 46)
+            .foregroundStyle(SpotRelayTheme.textPrimary)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 18,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+        .accessibilityLabel("Turn on Auto Relay")
     }
 
     private var parkedLocationShortcutButton: some View {
@@ -889,6 +924,10 @@ struct HomeView: View {
 
     private var hasShareableLocation: Bool {
         parkingReminderStore.latestRememberedParkedLocation != nil || spotStore.userCoordinate != nil
+    }
+
+    private var shouldShowAutoRelayEnableButton: Bool {
+        !parkingReminderStore.isAutoRelayEnabled
     }
 
     private var parkedHistoryMapReminders: [ParkingReminderStore.Reminder] {
@@ -1717,14 +1756,6 @@ private struct MapNorthUpButton: View {
                 .frame(width: 46, height: 46)
         }
         .buttonStyle(.plain)
-        .glassPanel(
-            cornerRadius: 18,
-            tint: SpotRelayTheme.strongGlassTint,
-            stroke: SpotRelayTheme.glassStroke,
-            shadow: SpotRelayTheme.rowShadow,
-            shadowRadius: 14,
-            shadowY: 8
-        )
         .accessibilityLabel("Point map north")
     }
 }
@@ -2083,7 +2114,9 @@ private struct ParkedLocationDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
                     detailPanel
-                    autoRelayPanel
+                    if parkingReminderStore.isAutoRelayEnabled {
+                        autoRelayOffRow
+                    }
                     directionsPanel
                     historyPanel
                     controlsPanel
@@ -2225,52 +2258,41 @@ private struct ParkedLocationDetailView: View {
         )
     }
 
-    private var autoRelayPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Toggle(
-                isOn: Binding(
-                    get: { parkingReminderStore.isAutoRelayEnabled },
-                    set: { parkingReminderStore.setAutoRelayEnabled($0) }
-                )
-            ) {
-                HStack(alignment: .top, spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(SpotRelayTheme.primary.opacity(0.16))
-                            .frame(width: 42, height: 42)
+    private var autoRelayOffRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(SpotRelayTheme.primary)
+                .frame(width: 34, height: 34)
+                .background(SpotRelayTheme.primary.opacity(0.16), in: Circle())
 
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(SpotRelayTheme.primary)
-                    }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Auto Relay is on")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Auto Relay")
-                            .font(.headline.weight(.bold))
-                            .foregroundStyle(SpotRelayTheme.textPrimary)
-
-                        Text("After you get back in the car and start driving away, SpotRelay can automatically share this saved spot for nearby drivers.")
-                            .font(.subheadline)
-                            .foregroundStyle(SpotRelayTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-            .toggleStyle(.switch)
-
-            HStack(spacing: 10) {
-                badge(text: parkingReminderStore.isAutoRelayEnabled ? "Auto-share on" : "Opt-in only")
-                badge(text: "5 min live")
+                Text("SpotRelay can auto-share when you drive away.")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
             }
 
-            Text("Nothing is shared unless this is enabled. You can turn it off anytime, and manual sharing still works the same way.")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(SpotRelayTheme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+
+            Button {
+                parkingReminderStore.setAutoRelayEnabled(false)
+            } label: {
+                Text("Turn off")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(SpotRelayTheme.badgeText)
+            }
+            .buttonStyle(.plain)
         }
-        .padding(20)
+        .padding(16)
         .glassPanel(
-            cornerRadius: 28,
+            cornerRadius: 24,
             tint: SpotRelayTheme.glassTint,
             stroke: SpotRelayTheme.softStroke,
             shadow: SpotRelayTheme.rowShadow,
