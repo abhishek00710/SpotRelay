@@ -195,10 +195,19 @@ struct HomeView: View {
         VStack(spacing: 16) {
             headerCard
             VStack(spacing: 10) {
-                HStack {
-                    Spacer()
-                    MapRecenterButton {
-                        recenterOnUser()
+                if parkingReminderStore.hasRememberedParkedLocations {
+                    HStack {
+                        Spacer()
+                        parkedLocationShortcutButton
+                    }
+                }
+
+                if shouldShowRecenterButton {
+                    HStack {
+                        Spacer()
+                        MapRecenterButton {
+                            recenterOnUser()
+                        }
                     }
                 }
 
@@ -227,6 +236,8 @@ struct HomeView: View {
                 }
             }
             .padding(.horizontal, 4)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: parkingReminderStore.hasRememberedParkedLocations)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowRecenterButton)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowNorthUpButton)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowAutoRelayEnableButton)
             Spacer()
@@ -432,11 +443,22 @@ struct HomeView: View {
     private var headerCard: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Live city parking")
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-                    .foregroundStyle(SpotRelayTheme.badgeText)
+                HStack {
+                    Text("Live city parking - (\(spotStore.userCoordinate == nil ? L10n.tr("Locating...") : localizedAreaLabel(spotStore.currentAreaLabel)))")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                        .tracking(1.2)
+                        .foregroundStyle(SpotRelayTheme.badgeText)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 10) {
+                        HStack(spacing: 10) {
+                            if !pushNotificationStore.isAuthorizedForNotifications {
+                                notificationButton
+                            }
+                            profileButton
+                        }
+                    }
+                }
 
                 Text("SpotRelay")
                     .font(.system(size: 32, weight: .bold, design: .rounded))
@@ -445,30 +467,6 @@ struct HomeView: View {
                 Text("Pass the spot. Skip the stress.")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
-            }
-
-            Spacer(minLength: 0)
-
-            VStack(alignment: .trailing, spacing: 10) {
-                Text(spotStore.userCoordinate == nil ? L10n.tr("Locating...") : localizedAreaLabel(spotStore.currentAreaLabel))
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(SpotRelayTheme.badgeFill, in: Capsule())
-                    .foregroundStyle(SpotRelayTheme.badgeText)
-
-                HStack(spacing: 10) {
-                    if !pushNotificationStore.isAuthorizedForNotifications {
-                        notificationButton
-                    }
-                    profileButton
-                }
-
-                if parkingReminderStore.hasRememberedParkedLocations {
-                    VStack(alignment: .trailing, spacing: 6) {
-                        parkedLocationShortcutButton
-                    }
-                }
             }
         }
         .padding(20)
@@ -928,6 +926,24 @@ struct HomeView: View {
 
     private var shouldShowAutoRelayEnableButton: Bool {
         !parkingReminderStore.isAutoRelayEnabled
+    }
+
+    private var shouldShowRecenterButton: Bool {
+        if isEditingParkedPinOnMap {
+            return true
+        }
+
+        guard let userCoordinate = spotStore.userCoordinate else {
+            return true
+        }
+
+        guard let mapCenter = lastObservedMapRegion?.center else {
+            return false
+        }
+
+        let mapCenterLocation = CLLocation(latitude: mapCenter.latitude, longitude: mapCenter.longitude)
+        let userLocation = CLLocation(latitude: userCoordinate.latitude, longitude: userCoordinate.longitude)
+        return mapCenterLocation.distance(from: userLocation) > 35
     }
 
     private var parkedHistoryMapReminders: [ParkingReminderStore.Reminder] {
