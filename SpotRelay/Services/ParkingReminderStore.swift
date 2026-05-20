@@ -43,6 +43,15 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         let reason: String
     }
 
+    private struct DebugDemoBackup: Codable {
+        let activeReminder: Reminder?
+        let savedParkedLocation: Reminder?
+        let parkedLocationHistory: [Reminder]
+        let lastNudgedReminder: Reminder?
+        let debugState: DebugState
+        let hasExitedRegion: Bool
+    }
+
     enum Error: LocalizedError {
         case locationAuthorizationRequired
         case regionMonitoringUnavailable
@@ -168,6 +177,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         static let hasExitedRegion = "parkingReminder.hasExitedRegion"
         static let debugState = "parkingReminder.debugState"
         static let autoRelayEnabled = "parkingReminder.autoRelayEnabled"
+        static let debugDemoBackup = "parkingReminder.debugDemoBackup"
         nonisolated static let regionIdentifier = "parkingReminder.returnToCar.region"
         static let notificationIdentifier = "parkingReminder.returnToCar.notification"
     }
@@ -329,6 +339,53 @@ final class ParkingReminderStore: NSObject, ObservableObject {
             defaults.removeObject(forKey: Keys.activeReminder)
             defaults.removeObject(forKey: Keys.hasExitedRegion)
             updateDebugState(.noReminder)
+        }
+    }
+
+    func enableDebugDemoParkedData(anchor coordinate: CLLocationCoordinate2D) {
+        backupCurrentStateForDebugDemoIfNeeded()
+        stopMonitoringReminderRegion()
+        locationManager.stopMonitoringSignificantLocationChanges()
+        center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
+
+        let demoHistory = DebugDemoData.parkedHistory(around: coordinate)
+        guard let demoCurrent = demoHistory.first else { return }
+
+        activeReminder = nil
+        savedParkedLocation = demoCurrent
+        parkedLocationHistory = Self.limitedHistory(demoHistory)
+        updateDebugState(.noReminder)
+        defaults.removeObject(forKey: Keys.activeReminder)
+        defaults.removeObject(forKey: Keys.hasExitedRegion)
+        defaults.removeObject(forKey: Keys.lastNudgedReminder)
+        persist(demoCurrent, key: Keys.savedParkedLocation)
+        persist(parkedLocationHistory, key: Keys.parkedLocationHistory)
+    }
+
+    func disableDebugDemoParkedData() {
+        guard let backup = loadDebugDemoBackup() else { return }
+
+        stopMonitoringReminderRegion()
+        locationManager.stopMonitoringSignificantLocationChanges()
+        center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
+
+        restore(backup.activeReminder, key: Keys.activeReminder)
+        restore(backup.savedParkedLocation, key: Keys.savedParkedLocation)
+        restore(backup.lastNudgedReminder, key: Keys.lastNudgedReminder)
+        persist(Self.limitedHistory(backup.parkedLocationHistory), key: Keys.parkedLocationHistory)
+        defaults.set(backup.hasExitedRegion, forKey: Keys.hasExitedRegion)
+
+        activeReminder = backup.activeReminder
+        savedParkedLocation = backup.savedParkedLocation
+        parkedLocationHistory = Self.limitedHistory(backup.parkedLocationHistory)
+        lastNudgedReminder = backup.lastNudgedReminder
+        updateDebugState(backup.debugState)
+        defaults.removeObject(forKey: Keys.debugDemoBackup)
+
+        Task {
+            await restoreMonitoringIfNeeded()
         }
     }
 
@@ -695,9 +752,36 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         defaults.set(data, forKey: key)
     }
 
+    private func restore(_ reminder: Reminder?, key: String) {
+        guard let reminder else {
+            defaults.removeObject(forKey: key)
+            return
+        }
+        persist(reminder, key: key)
+    }
+
     private func persist(_ reminders: [Reminder], key: String) {
         guard let data = try? JSONEncoder().encode(reminders) else { return }
         defaults.set(data, forKey: key)
+    }
+
+    private func backupCurrentStateForDebugDemoIfNeeded() {
+        guard loadDebugDemoBackup() == nil else { return }
+        let backup = DebugDemoBackup(
+            activeReminder: activeReminder,
+            savedParkedLocation: savedParkedLocation,
+            parkedLocationHistory: parkedLocationHistory,
+            lastNudgedReminder: lastNudgedReminder,
+            debugState: debugState,
+            hasExitedRegion: hasExitedRegion
+        )
+        guard let data = try? JSONEncoder().encode(backup) else { return }
+        defaults.set(data, forKey: Keys.debugDemoBackup)
+    }
+
+    private func loadDebugDemoBackup() -> DebugDemoBackup? {
+        guard let data = defaults.data(forKey: Keys.debugDemoBackup) else { return nil }
+        return try? JSONDecoder().decode(DebugDemoBackup.self, from: data)
     }
 
     private func persistUpdatedHistory(adding reminder: Reminder) {

@@ -2160,11 +2160,23 @@ private struct ParkedLocationDetailView: View {
     private var heroCard: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Parked car")
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .tracking(1.2)
-                    .foregroundStyle(SpotRelayTheme.badgeText)
+                HStack {
+                    Text("Parked car")
+                        .font(.caption.weight(.semibold))
+                        .textCase(.uppercase)
+                        .tracking(1.2)
+                        .foregroundStyle(SpotRelayTheme.badgeText)
+                    Spacer()
+                    ZStack {
+                        Circle()
+                            .fill(SpotRelayTheme.orbGradient)
+                            .frame(width: 58, height: 58)
+
+                        Image(systemName: "car.circle.fill")
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
 
                 Text(parkingPlaceTitle(for: reminder))
                     .font(.system(size: 30, weight: .bold, design: .rounded))
@@ -2173,18 +2185,6 @@ private struct ParkedLocationDetailView: View {
                 Text("SpotRelay will use this parked pin by default when you share a handoff, so the spot lands closer to the actual car location.")
                     .font(.body.weight(.medium))
                     .foregroundStyle(SpotRelayTheme.textSecondary)
-            }
-
-            Spacer(minLength: 0)
-
-            ZStack {
-                Circle()
-                    .fill(SpotRelayTheme.orbGradient)
-                    .frame(width: 58, height: 58)
-
-                Image(systemName: "car.circle.fill")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(.white)
             }
         }
         .padding(24)
@@ -2745,13 +2745,23 @@ private struct ParkedLocationDetailView: View {
     private func parkedActionButton(title: String, icon: String, color: Color) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
+                .font(.system(size: 18, weight: .bold))
+                .frame(width: 24)
+
             Text(L10n.tr(title))
+                .font(.subheadline.weight(.bold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
         }
-        .font(.subheadline.weight(.bold))
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, minHeight: 78, maxHeight: 78, alignment: .leading)
+        .padding(.horizontal, 14)
         .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .foregroundStyle(color)
+        .clipped()
     }
 
     private func updateParkedLocationToCurrentPosition() async {

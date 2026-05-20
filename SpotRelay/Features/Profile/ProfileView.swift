@@ -88,6 +88,9 @@ struct ProfileView: View {
                     heroCard
                     accountRecoveryCard
                     ProfileInsightsSection(user: user)
+                    #if DEBUG
+                    debugDemoDataCard
+                    #endif
                 }
                 .padding(20)
             }
@@ -306,6 +309,60 @@ struct ProfileView: View {
         }
         .buttonStyle(.plain)
     }
+
+    #if DEBUG
+    private var debugDemoDataCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "testtube.2")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(SpotRelayTheme.primary)
+                    .frame(width: 38, height: 38)
+                    .background(SpotRelayTheme.primary.opacity(0.16), in: Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Debug demo data")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text("Adds dummy nearby spots plus a parked car and recent parking history. Turn it off to restore your real saved parked data.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Toggle("", isOn: Binding(
+                    get: { spotStore.isDebugDemoDataEnabled },
+                    set: { isEnabled in
+                        Task {
+                            await spotStore.setDebugDemoDataEnabled(isEnabled)
+                        }
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+            }
+
+            Text(spotStore.isDebugDemoDataEnabled ? "Demo data is currently visible on the map." : "Demo data is off.")
+                .font(.caption.weight(.bold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(SpotRelayTheme.badgeFill, in: Capsule())
+                .foregroundStyle(spotStore.isDebugDemoDataEnabled ? SpotRelayTheme.success : SpotRelayTheme.badgeText)
+        }
+        .padding(18)
+        .glassPanel(
+            cornerRadius: 26,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+    }
+    #endif
 
     private var accountRecoveryCard: some View {
         VStack(alignment: .leading, spacing: 16) {

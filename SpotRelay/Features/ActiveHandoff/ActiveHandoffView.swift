@@ -101,7 +101,7 @@ struct ActiveHandoffView: View {
             HStack(spacing: 12) {
                 detailPill(title: counterpartyProfile == nil ? "Driver" : "Stars", value: counterpartyPrimaryDetail)
                 detailPill(title: "Stage", value: approachStageTitle)
-            }
+            }.fixedSize(horizontal: false, vertical: true)
 
             Text(approachStageDetail)
                 .font(.subheadline.weight(.medium))
@@ -505,7 +505,7 @@ struct ActiveHandoffView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 

@@ -36,6 +36,7 @@ final class SpotStore: NSObject, ObservableObject {
     @Published private(set) var isNetworkAvailable = true
     @Published private(set) var userProfiles: [String: AppUser] = [:]
     @Published private(set) var reviewPromptRequest: ReviewPromptRequest?
+    @Published private(set) var isDebugDemoDataEnabled: Bool
     @Published var activeHandoffID: String?
     @Published var errorBanner: SpotRelayErrorBannerState?
     let backendMode: SpotRelayBackendMode
@@ -47,8 +48,13 @@ final class SpotStore: NSObject, ObservableObject {
     private let networkPathMonitor = NWPathMonitor()
     private let networkMonitorQueue = DispatchQueue(label: "com.spotrelay.network-monitor")
     private var cancellables = Set<AnyCancellable>()
+    private var repositorySpots: [ParkingSpotSignal] = []
     private var lastGeocodedLocation: CLLocation?
     private var bannerDismissTask: Task<Void, Never>?
+
+    private enum Keys {
+        static let debugDemoDataEnabled = "spotStore.debugDemoDataEnabled"
+    }
 
     init(
         repository: SpotRepository,
@@ -61,6 +67,7 @@ final class SpotStore: NSObject, ObservableObject {
         self.backendMode = backendMode
         self.parkingReminderStore = parkingReminderStore
         self.currentUser = userIdentity.currentUser
+        self.isDebugDemoDataEnabled = UserDefaults.standard.bool(forKey: Keys.debugDemoDataEnabled)
         super.init()
 
         bindRepository()
@@ -405,8 +412,25 @@ final class SpotStore: NSObject, ObservableObject {
         errorBanner = nil
     }
 
+    func setDebugDemoDataEnabled(_ isEnabled: Bool) async {
+        guard isDebugDemoDataEnabled != isEnabled else { return }
+        isDebugDemoDataEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: Keys.debugDemoDataEnabled)
+
+        if isEnabled {
+            parkingReminderStore.enableDebugDemoParkedData(anchor: debugDemoAnchorCoordinate)
+        } else {
+            parkingReminderStore.disableDebugDemoParkedData()
+            activeHandoffID = nil
+        }
+
+        applyRepositorySpots(repositorySpots)
+        ParkingSequenceLogger.shared.append("Debug demo data \(isEnabled ? "enabled" : "disabled")")
+    }
+
     private func bindRepository() {
-        spots = repository.currentSpots
+        repositorySpots = repository.currentSpots
+        spots = displaySpots(from: repositorySpots)
 
         repository.spotsPublisher
             .receive(on: DispatchQueue.main)
@@ -433,14 +457,24 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     private func applyRepositorySpots(_ latestSpots: [ParkingSpotSignal]) {
-        spots = latestSpots
-        observeProfiles(for: latestSpots)
+        repositorySpots = latestSpots
+        let displaySpots = displaySpots(from: latestSpots)
+        spots = displaySpots
+        observeProfiles(for: displaySpots)
 
         guard let activeHandoffID else { return }
-        let stillActive = latestSpots.contains { $0.id == activeHandoffID && $0.isActive }
+        let stillActive = displaySpots.contains { $0.id == activeHandoffID && $0.isActive }
         if !stillActive {
             self.activeHandoffID = nil
         }
+    }
+
+    private func displaySpots(from latestSpots: [ParkingSpotSignal]) -> [ParkingSpotSignal] {
+        guard isDebugDemoDataEnabled else { return latestSpots }
+        let existingIDs = Set(latestSpots.map(\.id))
+        let demoSpots = DebugDemoData.spots(around: debugDemoAnchorCoordinate)
+            .filter { !existingIDs.contains($0.id) }
+        return latestSpots + demoSpots
     }
 
     private func observeProfiles(for latestSpots: [ParkingSpotSignal]) {
@@ -465,10 +499,19 @@ final class SpotStore: NSObject, ObservableObject {
     private func setUserCoordinate(_ coordinate: CLLocationCoordinate2D) {
         userCoordinate = coordinate
         repository.seedPreviewSpotsIfNeeded(around: coordinate)
+        if isDebugDemoDataEnabled {
+            applyRepositorySpots(repositorySpots)
+        }
         refreshAreaLabelIfNeeded(for: coordinate)
         Task {
             await parkingReminderStore.verifyReturnProximityFallback(at: coordinate)
         }
+    }
+
+    private var debugDemoAnchorCoordinate: CLLocationCoordinate2D {
+        userCoordinate
+            ?? parkingReminderStore.latestRememberedParkedLocation?.coordinate
+            ?? CLLocationCoordinate2D(latitude: 37.56449, longitude: -122.05515)
     }
 
     private func refreshAreaLabelIfNeeded(for coordinate: CLLocationCoordinate2D) {

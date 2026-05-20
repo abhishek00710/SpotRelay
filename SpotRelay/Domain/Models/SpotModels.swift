@@ -150,3 +150,46 @@ extension ParkingSpotSignal {
         }
     }
 }
+
+enum DebugDemoData {
+    static func spots(around coordinate: CLLocationCoordinate2D) -> [ParkingSpotSignal] {
+        let seeds: [(id: String, createdBy: String, claimedBy: String?, latOffset: Double, lonOffset: Double, createdAgo: TimeInterval, leavingIn: TimeInterval, status: SpotStatus)] = [
+            ("debug-demo-spot-1", "demo-driver-a", nil, 0.00055, -0.00042, 60, 180, .posted),
+            ("debug-demo-spot-2", "demo-driver-b", nil, -0.00074, 0.00066, 140, 360, .posted),
+            ("debug-demo-spot-3", "demo-driver-c", "demo-driver-d", 0.00092, 0.00088, 260, 520, .claimed)
+        ]
+
+        return seeds.map { seed in
+            ParkingSpotSignal(
+                id: seed.id,
+                createdBy: seed.createdBy,
+                claimedBy: seed.claimedBy,
+                latitude: coordinate.latitude + seed.latOffset,
+                longitude: coordinate.longitude + seed.lonOffset,
+                createdAt: .now.addingTimeInterval(-seed.createdAgo),
+                leavingAt: .now.addingTimeInterval(seed.leavingIn),
+                status: seed.status
+            )
+        }
+    }
+
+    static func parkedHistory(around coordinate: CLLocationCoordinate2D) -> [ParkingReminderStore.Reminder] {
+        let seeds: [(latOffset: Double, lonOffset: Double, createdAgo: TimeInterval, label: String)] = [
+            (0.00018, -0.00012, 12 * 60, "Demo parked car"),
+            (-0.00048, 0.00034, 3 * 60 * 60, "Pacific Commons"),
+            (0.00115, 0.00072, 25 * 60 * 60, "NewPark Mall"),
+            (-0.00128, -0.00058, 30 * 60 * 60, "Fremont Hub"),
+            (0.00064, -0.00105, 49 * 60 * 60, "Central Park")
+        ]
+
+        return seeds.map { seed in
+            ParkingReminderStore.Reminder(
+                latitude: coordinate.latitude + seed.latOffset,
+                longitude: coordinate.longitude + seed.lonOffset,
+                createdAt: .now.addingTimeInterval(-seed.createdAgo),
+                areaLabel: seed.label,
+                radiusMeters: ParkingReminderStore.defaultRadiusMeters
+            )
+        }
+    }
+}
