@@ -49,11 +49,19 @@ final class SpotStore: NSObject, ObservableObject {
     private let networkMonitorQueue = DispatchQueue(label: "com.spotrelay.network-monitor")
     private var cancellables = Set<AnyCancellable>()
     private var repositorySpots: [ParkingSpotSignal] = []
+    private var lastUserLocation: CLLocation?
     private var lastGeocodedLocation: CLLocation?
     private var bannerDismissTask: Task<Void, Never>?
+    private var isAutoCompletingArrival = false
 
     private enum Keys {
         static let debugDemoDataEnabled = "spotStore.debugDemoDataEnabled"
+    }
+
+    private enum AutoArrivalCompletion {
+        static let maximumAccuracyMeters: CLLocationAccuracy = 3
+        static let completionRadiusMeters: CLLocationDistance = 3
+        static let maximumLocationAge: TimeInterval = 30
     }
 
     init(
@@ -299,6 +307,7 @@ final class SpotStore: NSObject, ObservableObject {
                 now: .now
             )
             activeHandoffID = signal.id
+            updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
             return true
         } catch {
@@ -338,6 +347,7 @@ final class SpotStore: NSObject, ObservableObject {
         do {
             _ = try await repository.cancelHandoff(id: activeHandoffID, userID: currentUser.id)
             self.activeHandoffID = nil
+            updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
             return true
         } catch {
@@ -363,6 +373,7 @@ final class SpotStore: NSObject, ObservableObject {
                 reviewPromptRequest = ReviewPromptRequest(successfulHandoffCount: currentUser.successfulHandoffs)
             }
             self.activeHandoffID = nil
+            updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
             return true
         } catch {
@@ -422,6 +433,7 @@ final class SpotStore: NSObject, ObservableObject {
         } else {
             parkingReminderStore.disableDebugDemoParkedData()
             activeHandoffID = nil
+            updateLocationTrackingPrecisionForActiveHandoff()
         }
 
         applyRepositorySpots(repositorySpots)
@@ -466,7 +478,9 @@ final class SpotStore: NSObject, ObservableObject {
         let stillActive = displaySpots.contains { $0.id == activeHandoffID && $0.isActive }
         if !stillActive {
             self.activeHandoffID = nil
+            updateLocationTrackingPrecisionForActiveHandoff()
         }
+        evaluateAutoArrivalCompletionIfNeeded()
     }
 
     private func displaySpots(from latestSpots: [ParkingSpotSignal]) -> [ParkingSpotSignal] {
@@ -491,20 +505,64 @@ final class SpotStore: NSObject, ObservableObject {
     private func startLocationTrackingIfAuthorized() {
         guard hasLocationAccess else { return }
         if let coordinate = locationManager.location?.coordinate {
-            setUserCoordinate(coordinate)
+            setUserLocation(locationManager.location ?? CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
         }
         locationManager.startUpdatingLocation()
     }
 
-    private func setUserCoordinate(_ coordinate: CLLocationCoordinate2D) {
+    private func setUserLocation(_ location: CLLocation) {
+        let coordinate = location.coordinate
+        lastUserLocation = location
         userCoordinate = coordinate
         repository.seedPreviewSpotsIfNeeded(around: coordinate)
         if isDebugDemoDataEnabled {
             applyRepositorySpots(repositorySpots)
         }
         refreshAreaLabelIfNeeded(for: coordinate)
+        evaluateAutoArrivalCompletionIfNeeded()
         Task {
             await parkingReminderStore.verifyReturnProximityFallback(at: coordinate)
+        }
+    }
+
+    private func evaluateAutoArrivalCompletionIfNeeded() {
+        guard !isAutoCompletingArrival else { return }
+        guard let activeHandoff else { return }
+        guard activeHandoff.claimedBy == currentUser.id,
+              activeHandoff.createdBy != currentUser.id,
+              activeHandoff.isActive else { return }
+        guard let location = lastUserLocation else { return }
+        guard abs(location.timestamp.timeIntervalSinceNow) <= AutoArrivalCompletion.maximumLocationAge else { return }
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= AutoArrivalCompletion.maximumAccuracyMeters else { return }
+
+        let spotLocation = CLLocation(
+            latitude: activeHandoff.latitude,
+            longitude: activeHandoff.longitude
+        )
+        let distance = location.distance(from: spotLocation)
+        guard distance <= AutoArrivalCompletion.completionRadiusMeters else { return }
+
+        isAutoCompletingArrival = true
+        let handoffID = activeHandoff.id
+        ParkingSequenceLogger.shared.append(
+            "Auto handoff completion triggered: id=\(handoffID), distance=\(String(format: "%.1f", distance))m, accuracy=\(Int(location.horizontalAccuracy.rounded()))m"
+        )
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.completeActiveHandoff(success: true)
+            self.isAutoCompletingArrival = false
+        }
+    }
+
+    private func updateLocationTrackingPrecisionForActiveHandoff() {
+        if currentUserRole == .arriving {
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = 1
+            startLocationTrackingIfAuthorized()
+        } else {
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            locationManager.distanceFilter = 10
         }
     }
 
@@ -640,9 +698,9 @@ extension SpotStore: CLLocationManagerDelegate {
     }
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let coordinate = locations.last?.coordinate else { return }
+        guard let location = locations.last else { return }
         Task { @MainActor [weak self] in
-            self?.setUserCoordinate(coordinate)
+            self?.setUserLocation(location)
         }
     }
 
