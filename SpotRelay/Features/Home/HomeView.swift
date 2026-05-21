@@ -218,16 +218,6 @@ struct HomeView: View {
                     }
                 }
 
-                if shouldShowNorthUpButton {
-                    HStack {
-                        Spacer()
-                        MapNorthUpButton(headingDegrees: normalizedMapHeadingDegrees) {
-                            orientMapNorth()
-                        }
-                        .transition(.scale(scale: 0.88).combined(with: .opacity))
-                    }
-                }
-
                 if shouldShowSmartParkingButton {
                     HStack {
                         Spacer()
@@ -238,7 +228,6 @@ struct HomeView: View {
             .padding(.horizontal, 4)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: parkingReminderStore.hasRememberedParkedLocations)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowRecenterButton)
-            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowNorthUpButton)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowAutoRelayEnableButton)
             Spacer()
             nearbySheetContainer
@@ -319,7 +308,7 @@ struct HomeView: View {
                         .foregroundStyle(SpotRelayTheme.textPrimary)
                 }
             }
-            .frame(width: 44, height: 44)
+            .frame(width: 46, height: 46)
         }
         .buttonStyle(.plain)
         .glassPanel(
@@ -424,10 +413,6 @@ struct HomeView: View {
         case .monitoring, .unsupported:
             return false
         }
-    }
-
-    private var shouldShowNorthUpButton: Bool {
-        !isEditingParkedPinOnMap && mapHeadingDeltaFromNorth > 4
     }
 
     private var normalizedMapHeadingDegrees: CLLocationDirection {

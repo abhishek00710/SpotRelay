@@ -228,6 +228,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let longitude: Double
         let horizontalAccuracy: Double
         let speedMetersPerSecond: Double
+        let isStrongPairedDisconnect: Bool?
 
         var location: CLLocation {
             CLLocation(
@@ -291,6 +292,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let pendingVehicleDisconnectMaximumRestoreAge: TimeInterval = 20 * 60
     nonisolated private static let pendingVehicleDisconnectMaximumAccuracyMeters: CLLocationAccuracy = 12
     nonisolated private static let pendingVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 1.4
+    nonisolated private static let pairedVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 10.0
     nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
     nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
     nonisolated private static let resumedDrivingRetireDistanceFromSavedSpot: CLLocationDistance = 250
@@ -737,8 +739,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let speed = location.speed >= 0
             ? location.speed
             : parkingCaptureSnapshot.lastSpeedMetersPerSecond
+        let isStrongPairedDisconnect = parkingCaptureEngine.hasStrongPairedVehicleDisconnect
         guard let speed,
-              speed <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond else {
+              speed <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond ||
+              (isStrongPairedDisconnect && speed < Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond) else {
             return nil
         }
 
@@ -749,7 +753,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude,
             horizontalAccuracy: location.horizontalAccuracy,
-            speedMetersPerSecond: speed
+            speedMetersPerSecond: speed,
+            isStrongPairedDisconnect: isStrongPairedDisconnect
         )
     }
 
@@ -815,14 +820,16 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private func persistedVehicleDisconnectFallbackEvent(
         from record: PendingVehicleDisconnectRecord
     ) -> ParkingCaptureEvent? {
+        let isStrongPairedDisconnect = record.isStrongPairedDisconnect == true
         guard record.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters,
-              record.speedMetersPerSecond <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond else {
+              record.speedMetersPerSecond <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond ||
+              (isStrongPairedDisconnect && record.speedMetersPerSecond < Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond) else {
             return nil
         }
 
         if let latestLocation = locationManager.location,
            abs(latestLocation.timestamp.timeIntervalSinceNow) <= Self.currentLocationCorrectionMaximumAge,
-           latestLocation.speed >= Self.resumedDrivingSpeedMetersPerSecond,
+           latestLocation.speed >= (isStrongPairedDisconnect ? Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond : Self.resumedDrivingSpeedMetersPerSecond),
            latestLocation.distance(from: record.location) >= Self.resumedDrivingMinimumDistanceFromSavedSpot {
             parkingSequenceLogger.append(
                 "Persisted vehicle disconnect skipped: user already driving away, distance=\(Int(latestLocation.distance(from: record.location).rounded()))m"
@@ -830,20 +837,25 @@ final class SmartParkingStore: NSObject, ObservableObject {
             return nil
         }
 
+        var evidence = [
+            "vehicle disconnected",
+            "vehicle disconnected at stopped speed",
+            "vehicle signal",
+            record.sourceSummary,
+            "speed settled",
+            "car disconnected",
+            "precise disconnect fallback",
+            "GPS ±\(Int(record.horizontalAccuracy.rounded()))m"
+        ]
+        if isStrongPairedDisconnect {
+            evidence.append("paired vehicle disconnect signals")
+        }
+
         return ParkingCaptureEvent(
             location: record.location,
             parkedAt: record.disconnectedAt,
-            confidenceScore: 94,
-            evidence: [
-                "vehicle disconnected",
-                "vehicle disconnected at stopped speed",
-                "vehicle signal",
-                record.sourceSummary,
-                "speed settled",
-                "car disconnected",
-                "precise disconnect fallback",
-                "GPS ±\(Int(record.horizontalAccuracy.rounded()))m"
-            ],
+            confidenceScore: isStrongPairedDisconnect ? 97 : 94,
+            evidence: evidence,
             source: .vehicleDisconnect
         )
     }

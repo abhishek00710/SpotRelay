@@ -103,6 +103,7 @@ struct ParkingCaptureEngine {
 
     private static let minimumDriveSpeedMetersPerSecond: CLLocationSpeed = 7.0
     private static let movingSpeedMetersPerSecond: CLLocationSpeed = 3.0
+    private static let pairedVehicleDisconnectMaximumResumeSpeedMetersPerSecond: CLLocationSpeed = 10.0
     private static let stoppedSpeedMetersPerSecond: CLLocationSpeed = 1.4
     private static let maximumUsefulAccuracyMeters: CLLocationAccuracy = 80
     private static let maximumParkingAccuracyMeters: CLLocationAccuracy = 28
@@ -152,6 +153,11 @@ struct ParkingCaptureEngine {
 
     var pendingVehicleDisconnectAt: Date? {
         session?.pendingVehicleDisconnectAt
+    }
+
+    var hasStrongPairedVehicleDisconnect: Bool {
+        guard let session else { return false }
+        return Self.hasStrongPairedVehicleDisconnect(in: session)
     }
 
     mutating func reset(reason: String = "Reset") {
@@ -352,9 +358,16 @@ struct ParkingCaptureEngine {
         if location.speed >= Self.movingSpeedMetersPerSecond {
             if let disconnectAt = session?.pendingVehicleDisconnectAt,
                location.timestamp > disconnectAt {
-                session?.pendingVehicleDisconnectAt = nil
-                session?.pendingVehicleDisconnectLocation = nil
-                lastReason = "Ignoring vehicle disconnect: driving resumed"
+                if let activeSession = session,
+                   Self.hasStrongPairedVehicleDisconnect(in: activeSession),
+                   location.speed < Self.pairedVehicleDisconnectMaximumResumeSpeedMetersPerSecond {
+                    session?.evidence.insert("paired vehicle disconnect signals")
+                    lastReason = "Vehicle disconnected: tolerating low-speed movement after paired disconnect"
+                } else {
+                    session?.pendingVehicleDisconnectAt = nil
+                    session?.pendingVehicleDisconnectLocation = nil
+                    lastReason = "Ignoring vehicle disconnect: driving resumed"
+                }
             }
             session?.lastMovingAt = location.timestamp
             session?.stoppedSince = nil
@@ -504,6 +517,17 @@ struct ParkingCaptureEngine {
         }
 
         return stoppedSince
+    }
+
+    private static func hasStrongPairedVehicleDisconnect(in session: Session) -> Bool {
+        let strongTokens: Set<String> = [
+            "vehicle-signal:carplay",
+            "vehicle-signal:car-audio",
+            "vehicle-signal:bluetooth-audio",
+            "vehicle-signal:corebluetooth",
+            "vehicle-signal:phone-charging"
+        ]
+        return session.seenVehicleSignals.intersection(strongTokens).count >= 2
     }
 
     private func normalizedDisconnectLocation(_ location: CLLocation?, at date: Date) -> CLLocation? {
