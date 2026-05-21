@@ -167,7 +167,7 @@ struct OnboardingFlowView: View {
                     }
                 }
                 Spacer()
-                Text("\(page + 1) of \(pages.count)")
+                Text(L10n.format("%d of %d", page + 1, pages.count))
                     .font(.caption.weight(.bold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)

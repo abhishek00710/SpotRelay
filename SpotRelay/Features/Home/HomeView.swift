@@ -2678,11 +2678,6 @@ private struct ParkedLocationDetailView: View {
                     Text(reminder.createdAt.formatted(date: .omitted, time: .shortened))
                         .font(.caption.weight(.medium))
                         .foregroundStyle(SpotRelayTheme.textSecondary)
-
-                    Text(parkingPlaceSummary(for: reminder))
-                        .font(.caption)
-                        .foregroundStyle(SpotRelayTheme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
