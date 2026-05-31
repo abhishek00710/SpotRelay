@@ -28,6 +28,7 @@ struct HomeView: View {
     @State private var expandedSheetContentHeight: CGFloat = 0
     @State private var parkedLocationToastMessage: String?
     @State private var selectedParkedHistoryReminder: ParkingReminderStore.Reminder?
+    @State private var selectedSharedHistorySpot: ParkingSpotSignal?
     @GestureState private var nearbySheetDragTranslation: CGFloat = 0
 
     var body: some View {
@@ -76,6 +77,9 @@ struct HomeView: View {
                     initialReminder: parkedLocation,
                     onSelectReminder: { reminder in
                         focusOnParkedReminder(reminder)
+                    },
+                    onSelectSharedSpot: { signal in
+                        focusOnSharedSpot(signal)
                     }
                 )
                     .environmentObject(spotStore)
@@ -147,6 +151,13 @@ struct HomeView: View {
                                 ParkedHistoryMapPinView()
                             }
                             .buttonStyle(.plain)
+                        }
+                    }
+
+                    if let selectedSharedHistorySpot,
+                       !spotStore.nearbyActiveSpots.contains(where: { $0.id == selectedSharedHistorySpot.id }) {
+                        Annotation("Selected shared spot", coordinate: selectedSharedHistorySpot.coordinate) {
+                            SpotPinView(signal: selectedSharedHistorySpot)
                         }
                     }
 
@@ -932,7 +943,7 @@ struct HomeView: View {
     }
 
     private var parkedHistoryMapReminders: [ParkingReminderStore.Reminder] {
-        parkingReminderStore.parkedLocationHistory.filter { reminder in
+        parkingReminderStore.parkedLocationHistory.prefix(40).filter { reminder in
             reminder != parkingReminderStore.savedParkedLocation &&
             reminder != selectedParkedHistoryReminder
         }
@@ -976,6 +987,29 @@ struct HomeView: View {
         )
         mapHeadingDegrees = 0
         showParkedLocationToast(for: reminder)
+    }
+
+    private func focusOnSharedSpot(_ signal: ParkingSpotSignal) {
+        if let liveSpot = spotStore.nearbyActiveSpots.first(where: { $0.id == signal.id }) {
+            spotStore.activeHandoffID = liveSpot.id
+        } else {
+            spotStore.activeHandoffID = nil
+        }
+
+        selectedSharedHistorySpot = signal
+        isShowingParkedLocationSheet = false
+        collapseNearbySheetIfNeeded()
+        setCameraPosition(
+            .region(
+                MKCoordinateRegion(
+                    center: signal.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.006, longitudeDelta: 0.006)
+                )
+            ),
+            animated: true
+        )
+        mapHeadingDegrees = 0
+        showTransientParkedLocationToast(message: L10n.tr("Centered on your shared spot."))
     }
 
     private func beginParkedPinEditing(using reminder: ParkingReminderStore.Reminder) {
@@ -1202,6 +1236,20 @@ struct HomeView: View {
             message = L10n.tr("Centered on your parked spot.")
         }
 
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+            parkedLocationToastMessage = message
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.2))
+            guard parkedLocationToastMessage == message else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                parkedLocationToastMessage = nil
+            }
+        }
+    }
+
+    private func showTransientParkedLocationToast(message: String) {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
             parkedLocationToastMessage = message
         }
@@ -2031,10 +2079,12 @@ private struct ParkedLocationDetailView: View {
 
     let initialReminder: ParkingReminderStore.Reminder
     let onSelectReminder: (ParkingReminderStore.Reminder) -> Void
+    let onSelectSharedSpot: (ParkingSpotSignal) -> Void
 
     @State private var localAlert: HomeViewAlert?
     @State private var isSavedDetailsExpanded = false
-    @State private var isHistoryExpanded = false
+    @State private var isShowingParkedHistorySheet = false
+    @State private var isShowingSharedHistorySheet = false
     @State private var isShowingParkingLogShareSheet = false
     @State private var resolvedHistoryPlaceLabels: [Date: String] = [:]
 
@@ -2070,11 +2120,7 @@ private struct ParkedLocationDetailView: View {
     }
 
     private var historyResolutionToken: String {
-        ([reminder] + history)
-            .map { reminder in
-                "\(reminder.createdAt.timeIntervalSince1970):\(reminder.latitude):\(reminder.longitude)"
-            }
-            .joined(separator: "|")
+        "\(reminder.createdAt.timeIntervalSince1970):\(reminder.latitude):\(reminder.longitude)"
     }
 
     private var statusTitle: String {
@@ -2119,7 +2165,7 @@ private struct ParkedLocationDetailView: View {
                         autoRelayOffRow
                     }
                     directionsPanel
-                    historyPanel
+                    recordsPanel
                     controlsPanel
                     parkingDebugLogPanel
                 }
@@ -2135,6 +2181,34 @@ private struct ParkedLocationDetailView: View {
             }
             .sheet(isPresented: $isShowingParkingLogShareSheet) {
                 ActivityView(activityItems: [smartParkingStore.parkingLogFileURL])
+            }
+            .sheet(isPresented: $isShowingParkedHistorySheet) {
+                ParkedLocationHistorySheet(
+                    reminders: history,
+                    currentReminder: parkingReminderStore.savedParkedLocation,
+                    userCoordinate: spotStore.userCoordinate,
+                    onSelectReminder: { selectedReminder in
+                        onSelectReminder(selectedReminder)
+                        isShowingParkedHistorySheet = false
+                        dismiss()
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $isShowingSharedHistorySheet) {
+                SharedSpotHistorySheet(
+                    spots: spotStore.sharedSpotHistory,
+                    currentUserID: spotStore.currentUser.id,
+                    userCoordinate: spotStore.userCoordinate,
+                    onSelectSpot: { signal in
+                        onSelectSharedSpot(signal)
+                        isShowingSharedHistorySheet = false
+                        dismiss()
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .task(id: historyResolutionToken) {
                 await resolveHistoryPlaceLabels()
@@ -2347,58 +2421,48 @@ private struct ParkedLocationDetailView: View {
         )
     }
 
-    private var historyPanel: some View {
+    private var recordsPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading) {
                 HStack(spacing: 4) {
-                    Text("Recent parked locations")
+                    Text("Records")
                         .font(.headline.weight(.bold))
                         .foregroundStyle(SpotRelayTheme.textPrimary)
                     Spacer()
-                    Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                            isHistoryExpanded.toggle()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: isHistoryExpanded ? "chevron.up" : "chevron.down")
-                                .font(.caption.weight(.bold))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(SpotRelayTheme.badgeFill, in: Capsule())
-                        .foregroundStyle(SpotRelayTheme.badgeText)
-                    }
-                    .buttonStyle(.plain)
                 }
                 
-                Text("SpotRelay remembers your latest parked spots so the next stop can replace the current pin without losing context.")
+                Text("Keep the sheet calm, then dive into every saved parking stop or shared handoff when you need it.")
                     .font(.subheadline)
                     .foregroundStyle(SpotRelayTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            
-            if isHistoryExpanded {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(historySections) { section in
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(section.title)
-                                .font(.caption.weight(.bold))
-                                .textCase(.uppercase)
-                                .tracking(0.8)
-                                .foregroundStyle(SpotRelayTheme.textSecondary)
 
-                            VStack(spacing: 12) {
-                                ForEach(section.reminders, id: \.createdAt) { historyReminder in
-                                    historyRow(
-                                        reminder: historyReminder,
-                                        isCurrent: historyReminder == parkingReminderStore.savedParkedLocation
-                                    )
-                                }
-                            }
-                        }
-                    }
+            HStack(spacing: 12) {
+                Button {
+                    isShowingParkedHistorySheet = true
+                } label: {
+                    recordShortcutCard(
+                        title: "Parking records",
+                        subtitle: "Search saved car locations",
+                        count: history.count,
+                        icon: "parkingsign.circle.fill",
+                        color: SpotRelayTheme.primary
+                    )
                 }
+                .buttonStyle(.plain)
+
+                Button {
+                    isShowingSharedHistorySheet = true
+                } label: {
+                    recordShortcutCard(
+                        title: "Shared spots",
+                        subtitle: "Review posted handoffs",
+                        count: spotStore.sharedSpotHistory.count,
+                        icon: "paperplane.circle.fill",
+                        color: SpotRelayTheme.success
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2592,9 +2656,7 @@ private struct ParkedLocationDetailView: View {
 
     private func resolveHistoryPlaceLabels() async {
         var nextLabels = resolvedHistoryPlaceLabels
-        let reminders = ([reminder] + history).reduce(into: [Date: ParkingReminderStore.Reminder]()) { partialResult, reminder in
-            partialResult[reminder.createdAt] = reminder
-        }
+        let reminders = [reminder.createdAt: reminder]
 
         for (createdAt, reminder) in reminders where nextLabels[createdAt] == nil {
             if let label = await reverseGeocodedParkingPlaceLabel(for: reminder.coordinate) {
@@ -2742,6 +2804,54 @@ private struct ParkedLocationDetailView: View {
         .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .foregroundStyle(color)
         .clipped()
+    }
+
+    private func recordShortcutCard(title: String, subtitle: String, count: Int, icon: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(color)
+
+                Spacer()
+
+                Text(count.formatted())
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(color.opacity(0.16), in: Capsule())
+                    .foregroundStyle(color)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.tr(title))
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(SpotRelayTheme.textPrimary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+
+                Text(L10n.tr(subtitle))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+
+            HStack(spacing: 6) {
+                Text("Open")
+                    .font(.caption.weight(.bold))
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.black))
+            }
+            .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .padding(16)
+        .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(color.opacity(0.18), lineWidth: 1)
+        }
     }
 
     private func updateParkedLocationToCurrentPosition() async {

@@ -150,7 +150,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let vehicleConnectionLocationMaximumAccuracyMeters: CLLocationAccuracy = 150
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
-    nonisolated private static let parkedLocationHistoryLimit = 10
+    nonisolated private static let parkedLocationHistoryLimit = 10_000
     nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 18
     nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
     nonisolated private static let nudgedSessionDuplicateDistanceMeters: CLLocationDistance = 35

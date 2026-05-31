@@ -37,6 +37,7 @@ final class SpotStore: NSObject, ObservableObject {
     @Published private(set) var userProfiles: [String: AppUser] = [:]
     @Published private(set) var reviewPromptRequest: ReviewPromptRequest?
     @Published private(set) var isDebugDemoDataEnabled: Bool
+    @Published private(set) var sharedSpotHistory: [ParkingSpotSignal]
     @Published var activeHandoffID: String?
     @Published var errorBanner: SpotRelayErrorBannerState?
     let backendMode: SpotRelayBackendMode
@@ -58,6 +59,11 @@ final class SpotStore: NSObject, ObservableObject {
 
     private enum Keys {
         static let debugDemoDataEnabled = "spotStore.debugDemoDataEnabled"
+        static let sharedSpotHistory = "spotStore.sharedSpotHistory"
+    }
+
+    private enum SharedSpotHistory {
+        static let maximumRecordCount = 10_000
     }
 
     private enum AutoArrivalCompletion {
@@ -79,6 +85,7 @@ final class SpotStore: NSObject, ObservableObject {
         self.parkingReminderStore = parkingReminderStore
         self.currentUser = userIdentity.currentUser
         self.isDebugDemoDataEnabled = UserDefaults.standard.bool(forKey: Keys.debugDemoDataEnabled)
+        self.sharedSpotHistory = Self.loadSharedSpotHistory()
         super.init()
 
         bindRepository()
@@ -244,6 +251,7 @@ final class SpotStore: NSObject, ObservableObject {
             activeHandoffID = signal.id
             locallyTrackedActiveHandoff = signal
             upsertLocalSpot(signal)
+            persistSharedSpotHistory(adding: signal)
             clearErrorBanner()
             ParkingSequenceLogger.shared.append(
                 "Manual spot shared: id=\(signal.id), duration=\(durationMinutes)m, lat=\(coordinateToShare.latitude), lon=\(coordinateToShare.longitude)"
@@ -292,6 +300,7 @@ final class SpotStore: NSObject, ObservableObject {
             activeHandoffID = signal.id
             locallyTrackedActiveHandoff = signal
             upsertLocalSpot(signal)
+            persistSharedSpotHistory(adding: signal)
             clearErrorBanner()
             ParkingSequenceLogger.shared.append(
                 "Auto Relay shared parked spot: id=\(signal.id), reason=\(reason), duration=\(durationMinutes)m, lat=\(reminder.latitude), lon=\(reminder.longitude), area=\(reminder.areaLabel ?? "unknown area")"
@@ -521,6 +530,25 @@ final class SpotStore: NSObject, ObservableObject {
         repositorySpots.append(signal)
         spots = displaySpots(from: repositorySpots)
         observeProfiles(for: spots)
+    }
+
+    private func persistSharedSpotHistory(adding signal: ParkingSpotSignal) {
+        var history = sharedSpotHistory
+        history.removeAll { $0.id == signal.id }
+        history.insert(signal, at: 0)
+        history = Array(history.prefix(SharedSpotHistory.maximumRecordCount))
+        sharedSpotHistory = history
+
+        guard let data = try? JSONEncoder().encode(history) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.sharedSpotHistory)
+    }
+
+    private static func loadSharedSpotHistory() -> [ParkingSpotSignal] {
+        guard let data = UserDefaults.standard.data(forKey: Keys.sharedSpotHistory),
+              let history = try? JSONDecoder().decode([ParkingSpotSignal].self, from: data) else {
+            return []
+        }
+        return Array(history.prefix(SharedSpotHistory.maximumRecordCount))
     }
 
     private func displaySpots(from latestSpots: [ParkingSpotSignal]) -> [ParkingSpotSignal] {
