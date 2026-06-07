@@ -56,6 +56,12 @@ final class SpotStore: NSObject, ObservableObject {
     private var isAutoCompletingArrival = false
     private var locallyTrackedActiveHandoff: ParkingSpotSignal?
     private var lastAutoArrivalSkipLogKey: String?
+    private var autoArrivalClaimedHandoffID: String?
+    private var autoArrivalClaimedAt: Date?
+    private var autoArrivalHasPostClaimLocation = false
+    private var autoArrivalHasCloseConfirmation = false
+    private var autoArrivalDwellStartedAt: Date?
+    private var autoArrivalDwellTask: Task<Void, Never>?
 
     private enum Keys {
         static let debugDemoDataEnabled = "spotStore.debugDemoDataEnabled"
@@ -67,9 +73,11 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     private enum AutoArrivalCompletion {
-        static let maximumAccuracyMeters: CLLocationAccuracy = 3
-        static let completionRadiusMeters: CLLocationDistance = 3
+        static let maximumAccuracyMeters: CLLocationAccuracy = 10
+        static let closeConfirmationRadiusMeters: CLLocationDistance = 6
+        static let arrivalDwellRadiusMeters: CLLocationDistance = 10
         static let maximumLocationAge: TimeInterval = 30
+        static let minimumArrivalDwell: TimeInterval = 15
         static let claimedExpiryGraceInterval: TimeInterval = 10 * 60
     }
 
@@ -250,6 +258,7 @@ final class SpotStore: NSObject, ObservableObject {
             )
             activeHandoffID = signal.id
             locallyTrackedActiveHandoff = signal
+            clearAutoArrivalTracking()
             upsertLocalSpot(signal)
             persistSharedSpotHistory(adding: signal)
             clearErrorBanner()
@@ -284,6 +293,7 @@ final class SpotStore: NSObject, ObservableObject {
 
         if let leavingSignal = currentUserLeavingSignal {
             activeHandoffID = leavingSignal.id
+            clearAutoArrivalTracking()
             ParkingSequenceLogger.shared.append(
                 "Auto Relay share skipped: existing live handoff id=\(leavingSignal.id)"
             )
@@ -299,6 +309,7 @@ final class SpotStore: NSObject, ObservableObject {
             )
             activeHandoffID = signal.id
             locallyTrackedActiveHandoff = signal
+            clearAutoArrivalTracking()
             upsertLocalSpot(signal)
             persistSharedSpotHistory(adding: signal)
             clearErrorBanner()
@@ -327,6 +338,7 @@ final class SpotStore: NSObject, ObservableObject {
             )
             activeHandoffID = signal.id
             locallyTrackedActiveHandoff = signal
+            beginAutoArrivalTracking(for: signal.id)
             upsertLocalSpot(signal)
             updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
@@ -376,6 +388,7 @@ final class SpotStore: NSObject, ObservableObject {
             _ = try await repository.cancelHandoff(id: activeHandoffID, userID: currentUser.id)
             self.activeHandoffID = nil
             self.locallyTrackedActiveHandoff = nil
+            clearAutoArrivalTracking()
             updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
             return true
@@ -403,6 +416,7 @@ final class SpotStore: NSObject, ObservableObject {
             }
             self.activeHandoffID = nil
             self.locallyTrackedActiveHandoff = nil
+            clearAutoArrivalTracking()
             updateLocationTrackingPrecisionForActiveHandoff()
             clearErrorBanner()
             return true
@@ -520,6 +534,7 @@ final class SpotStore: NSObject, ObservableObject {
             }
             self.activeHandoffID = nil
             self.locallyTrackedActiveHandoff = nil
+            clearAutoArrivalTracking()
             updateLocationTrackingPrecisionForActiveHandoff()
         }
         evaluateAutoArrivalCompletionIfNeeded()
@@ -581,6 +596,7 @@ final class SpotStore: NSObject, ObservableObject {
     private func setUserLocation(_ location: CLLocation) {
         let coordinate = location.coordinate
         lastUserLocation = location
+        recordPostClaimLocationIfNeeded(location)
         userCoordinate = coordinate
         repository.seedPreviewSpotsIfNeeded(around: coordinate)
         if isDebugDemoDataEnabled {
@@ -590,6 +606,58 @@ final class SpotStore: NSObject, ObservableObject {
         evaluateAutoArrivalCompletionIfNeeded()
         Task {
             await parkingReminderStore.verifyReturnProximityFallback(at: coordinate)
+        }
+    }
+
+    private func beginAutoArrivalTracking(for handoffID: String) {
+        resetAutoArrivalDwell()
+        autoArrivalClaimedHandoffID = handoffID
+        autoArrivalClaimedAt = Date()
+        autoArrivalHasPostClaimLocation = false
+        autoArrivalHasCloseConfirmation = false
+        lastAutoArrivalSkipLogKey = nil
+        ParkingSequenceLogger.shared.append(
+            "Auto handoff monitoring armed: id=\(handoffID), dwell=\(Int(AutoArrivalCompletion.minimumArrivalDwell))s"
+        )
+    }
+
+    private func clearAutoArrivalTracking() {
+        resetAutoArrivalDwell()
+        autoArrivalClaimedHandoffID = nil
+        autoArrivalClaimedAt = nil
+        autoArrivalHasPostClaimLocation = false
+        autoArrivalHasCloseConfirmation = false
+    }
+
+    private func resetAutoArrivalDwell() {
+        autoArrivalDwellTask?.cancel()
+        autoArrivalDwellTask = nil
+        autoArrivalDwellStartedAt = nil
+    }
+
+    private func recordPostClaimLocationIfNeeded(_ location: CLLocation) {
+        guard let activeHandoffID,
+              autoArrivalClaimedHandoffID == activeHandoffID,
+              let claimedAt = autoArrivalClaimedAt,
+              location.timestamp > claimedAt else {
+            return
+        }
+        autoArrivalHasPostClaimLocation = true
+    }
+
+    private func scheduleAutoArrivalDwellRecheck(for handoffID: String, after delay: TimeInterval) {
+        guard autoArrivalDwellTask == nil else { return }
+        let nanoseconds = UInt64(max(delay, 0) * 1_000_000_000)
+        autoArrivalDwellTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            await MainActor.run {
+                self?.autoArrivalDwellTask = nil
+                self?.evaluateAutoArrivalCompletionIfNeeded()
+            }
         }
     }
 
@@ -614,7 +682,18 @@ final class SpotStore: NSObject, ObservableObject {
             return
         }
         guard abs(location.timestamp.timeIntervalSinceNow) <= AutoArrivalCompletion.maximumLocationAge else {
+            resetAutoArrivalDwell()
             logAutoArrivalSkip("latest user location is stale", handoffID: handoff.id)
+            return
+        }
+        if autoArrivalClaimedHandoffID != handoff.id || autoArrivalClaimedAt == nil {
+            beginAutoArrivalTracking(for: handoff.id)
+            logAutoArrivalSkip("waiting for fresh location update after claim", handoffID: handoff.id)
+            return
+        }
+        guard autoArrivalHasPostClaimLocation else {
+            resetAutoArrivalDwell()
+            logAutoArrivalSkip("waiting for fresh location update after claim", handoffID: handoff.id)
             return
         }
 
@@ -625,34 +704,98 @@ final class SpotStore: NSObject, ObservableObject {
         let distance = location.distance(from: spotLocation)
         guard location.horizontalAccuracy >= 0,
               location.horizontalAccuracy <= AutoArrivalCompletion.maximumAccuracyMeters else {
+            resetAutoArrivalDwell()
             if distance <= 25 {
                 logAutoArrivalSkip(
-                    "near spot but accuracy \(Int(location.horizontalAccuracy.rounded()))m exceeds \(Int(AutoArrivalCompletion.maximumAccuracyMeters))m, distance=\(String(format: "%.1f", distance))m",
-                    handoffID: handoff.id
-                )
-            }
-            return
-        }
-        guard distance <= AutoArrivalCompletion.completionRadiusMeters else {
-            if distance <= 25 {
-                logAutoArrivalSkip(
-                    "near spot but outside \(Int(AutoArrivalCompletion.completionRadiusMeters))m radius, distance=\(String(format: "%.1f", distance))m, accuracy=\(Int(location.horizontalAccuracy.rounded()))m",
+                    "near spot but accuracy \(formatMeters(location.horizontalAccuracy))m exceeds \(formatMeters(AutoArrivalCompletion.maximumAccuracyMeters))m, distance=\(formatMeters(distance))m",
                     handoffID: handoff.id
                 )
             }
             return
         }
 
+        if !autoArrivalHasCloseConfirmation,
+           distance <= AutoArrivalCompletion.closeConfirmationRadiusMeters {
+            autoArrivalHasCloseConfirmation = true
+            ParkingSequenceLogger.shared.append(
+                "Auto handoff close confirmation captured: id=\(handoff.id), distance=\(formatMeters(distance))m, accuracy=\(formatMeters(location.horizontalAccuracy))m"
+            )
+        }
+
+        guard autoArrivalHasCloseConfirmation else {
+            resetAutoArrivalDwell()
+            if distance <= 25 {
+                logAutoArrivalSkip(
+                    "waiting for close confirmation within \(formatMeters(AutoArrivalCompletion.closeConfirmationRadiusMeters))m, distance=\(formatMeters(distance))m, accuracy=\(formatMeters(location.horizontalAccuracy))m",
+                    handoffID: handoff.id
+                )
+            }
+            return
+        }
+
+        guard distance <= AutoArrivalCompletion.arrivalDwellRadiusMeters else {
+            resetAutoArrivalDwell()
+            if distance <= 25 {
+                logAutoArrivalSkip(
+                    "near spot but outside \(formatMeters(AutoArrivalCompletion.arrivalDwellRadiusMeters))m dwell radius, distance=\(formatMeters(distance))m, accuracy=\(formatMeters(location.horizontalAccuracy))m",
+                    handoffID: handoff.id
+                )
+            }
+            return
+        }
+        let now = Date()
+        if autoArrivalDwellStartedAt == nil {
+            autoArrivalDwellStartedAt = now
+            scheduleAutoArrivalDwellRecheck(
+                for: handoff.id,
+                after: AutoArrivalCompletion.minimumArrivalDwell
+            )
+            logAutoArrivalSkip(
+                "arrival dwell started: waiting \(Int(AutoArrivalCompletion.minimumArrivalDwell))s, distance=\(formatMeters(distance))m, accuracy=\(formatMeters(location.horizontalAccuracy))m",
+                handoffID: handoff.id
+            )
+            return
+        }
+        let dwellElapsed = now.timeIntervalSince(autoArrivalDwellStartedAt ?? now)
+        guard dwellElapsed >= AutoArrivalCompletion.minimumArrivalDwell else {
+            let remaining = max(AutoArrivalCompletion.minimumArrivalDwell - dwellElapsed, 0)
+            scheduleAutoArrivalDwellRecheck(for: handoff.id, after: remaining)
+            logAutoArrivalSkip(
+                "arrival dwell in progress: \(Int(ceil(remaining)))s remaining, distance=\(formatMeters(distance))m, accuracy=\(formatMeters(location.horizontalAccuracy))m",
+                handoffID: handoff.id
+            )
+            return
+        }
+
+        autoArrivalDwellTask?.cancel()
+        autoArrivalDwellTask = nil
         isAutoCompletingArrival = true
         let handoffID = handoff.id
+        let arrivalLatitude = location.coordinate.latitude
+        let arrivalLongitude = location.coordinate.longitude
+        let arrivalDistance = formatMeters(distance)
+        let arrivalAccuracy = formatMeters(location.horizontalAccuracy)
         ParkingSequenceLogger.shared.append(
-            "Auto handoff completion triggered: id=\(handoffID), distance=\(String(format: "%.1f", distance))m, accuracy=\(Int(location.horizontalAccuracy.rounded()))m"
+            "Auto handoff completion triggered: id=\(handoffID), distance=\(arrivalDistance)m, accuracy=\(arrivalAccuracy)m"
         )
         Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = await self.completeActiveHandoff(success: true)
+            let completed = await self.completeActiveHandoff(success: true)
+            if completed {
+                ParkingSequenceLogger.shared.append(
+                    "Auto handoff completed successfully: id=\(handoffID), arrivalLat=\(arrivalLatitude), arrivalLon=\(arrivalLongitude), distance=\(arrivalDistance)m, accuracy=\(arrivalAccuracy)m"
+                )
+            } else {
+                ParkingSequenceLogger.shared.append(
+                    "Auto handoff completion failed after trigger: id=\(handoffID), arrivalLat=\(arrivalLatitude), arrivalLon=\(arrivalLongitude), distance=\(arrivalDistance)m, accuracy=\(arrivalAccuracy)m"
+                )
+            }
             self.isAutoCompletingArrival = false
         }
+    }
+
+    private func formatMeters(_ value: Double) -> String {
+        String(format: "%.1f", value)
     }
 
     private func autoArrivalHandoffCandidate(id: String) -> ParkingSpotSignal? {
