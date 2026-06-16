@@ -69,7 +69,7 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     private enum SharedSpotHistory {
-        static let maximumRecordCount = 10_000
+        static let maximumRecordCount = 100
     }
 
     private enum AutoArrivalCompletion {
@@ -92,7 +92,12 @@ final class SpotStore: NSObject, ObservableObject {
         self.backendMode = backendMode
         self.parkingReminderStore = parkingReminderStore
         self.currentUser = userIdentity.currentUser
+        #if DEBUG
         self.isDebugDemoDataEnabled = UserDefaults.standard.bool(forKey: Keys.debugDemoDataEnabled)
+        #else
+        self.isDebugDemoDataEnabled = false
+        UserDefaults.standard.removeObject(forKey: Keys.debugDemoDataEnabled)
+        #endif
         self.sharedSpotHistory = Self.loadSharedSpotHistory()
         super.init()
 
@@ -248,6 +253,17 @@ final class SpotStore: NSObject, ObservableObject {
             )
             return false
         }
+        if let distance = HomeExclusionPolicy.distanceFromHome(to: coordinateToShare),
+           distance <= HomeExclusionPolicy.radiusMeters {
+            ParkingSequenceLogger.shared.append(
+                "Manual spot share blocked near saved home: distance=\(Int(distance.rounded()))m <= \(Int(HomeExclusionPolicy.radiusMeters))m"
+            )
+            presentBanner(
+                title: L10n.tr("Home address protected"),
+                message: L10n.tr("This spot is within 25m of your saved home, so SpotRelay won't share it.")
+            )
+            return false
+        }
 
         do {
             let signal = try await repository.postSpot(
@@ -296,6 +312,13 @@ final class SpotStore: NSObject, ObservableObject {
             clearAutoArrivalTracking()
             ParkingSequenceLogger.shared.append(
                 "Auto Relay share skipped: existing live handoff id=\(leavingSignal.id)"
+            )
+            return false
+        }
+        if let distance = HomeExclusionPolicy.distanceFromHome(to: reminder.coordinate),
+           distance <= HomeExclusionPolicy.radiusMeters {
+            ParkingSequenceLogger.shared.append(
+                "Auto Relay share skipped near saved home: distance=\(Int(distance.rounded()))m <= \(Int(HomeExclusionPolicy.radiusMeters))m"
             )
             return false
         }
@@ -468,6 +491,11 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     func setDebugDemoDataEnabled(_ isEnabled: Bool) async {
+        #if !DEBUG
+        isDebugDemoDataEnabled = false
+        UserDefaults.standard.removeObject(forKey: Keys.debugDemoDataEnabled)
+        return
+        #else
         guard isDebugDemoDataEnabled != isEnabled else { return }
         isDebugDemoDataEnabled = isEnabled
         UserDefaults.standard.set(isEnabled, forKey: Keys.debugDemoDataEnabled)
@@ -482,6 +510,7 @@ final class SpotStore: NSObject, ObservableObject {
 
         applyRepositorySpots(repositorySpots)
         ParkingSequenceLogger.shared.append("Debug demo data \(isEnabled ? "enabled" : "disabled")")
+        #endif
     }
 
     private func bindRepository() {
@@ -567,11 +596,15 @@ final class SpotStore: NSObject, ObservableObject {
     }
 
     private func displaySpots(from latestSpots: [ParkingSpotSignal]) -> [ParkingSpotSignal] {
+        #if !DEBUG
+        return latestSpots
+        #else
         guard isDebugDemoDataEnabled else { return latestSpots }
         let existingIDs = Set(latestSpots.map(\.id))
         let demoSpots = DebugDemoData.spots(around: debugDemoAnchorCoordinate)
             .filter { !existingIDs.contains($0.id) }
         return latestSpots + demoSpots
+        #endif
     }
 
     private func observeProfiles(for latestSpots: [ParkingSpotSignal]) {
@@ -599,9 +632,11 @@ final class SpotStore: NSObject, ObservableObject {
         recordPostClaimLocationIfNeeded(location)
         userCoordinate = coordinate
         repository.seedPreviewSpotsIfNeeded(around: coordinate)
+        #if DEBUG
         if isDebugDemoDataEnabled {
             applyRepositorySpots(repositorySpots)
         }
+        #endif
         refreshAreaLabelIfNeeded(for: coordinate)
         evaluateAutoArrivalCompletionIfNeeded()
         Task {

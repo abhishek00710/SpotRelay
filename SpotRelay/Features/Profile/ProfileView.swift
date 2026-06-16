@@ -7,6 +7,7 @@ import UIKit
 struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var spotStore: SpotStore
+    @EnvironmentObject private var homeExclusionStore: HomeExclusionStore
     @State private var draftDisplayName = ""
     @State private var draftAvatarJPEGData: Data?
     @State private var draftAvatarPreviewImage: UIImage?
@@ -21,6 +22,7 @@ struct ProfileView: View {
     @State private var currentAppleSignInNonce: String?
     @State private var isLinkingAppleAccount = false
     @State private var appleSignInErrorMessage: String?
+    @State private var isShowingHomeAddressSheet = false
     @FocusState private var isNameEditorFieldFocused: Bool
 
     private var user: AppUser {
@@ -87,6 +89,7 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     heroCard
                     accountRecoveryCard
+                    homeProtectionCard
                     ProfileInsightsSection(user: user)
                     #if DEBUG
                     debugDemoDataCard
@@ -112,6 +115,11 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $isShowingNameEditor) {
                 nameEditorSheet
+            }
+            .sheet(isPresented: $isShowingHomeAddressSheet) {
+                HomeAddressSheet(homeExclusionStore: homeExclusionStore)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
         }
         .spotRelayErrorBanner(using: spotStore)
@@ -308,6 +316,65 @@ struct ProfileView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var homeProtectionCard: some View {
+        Button {
+            isShowingHomeAddressSheet = true
+        } label: {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: "house.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(homeExclusionStore.hasHomeAddress ? SpotRelayTheme.success : SpotRelayTheme.textPrimary)
+
+                    if !homeExclusionStore.hasHomeAddress {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(SpotRelayTheme.accent)
+                            .background(SpotRelayTheme.strongGlassTint, in: Circle())
+                            .offset(x: 6, y: 5)
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .background(
+                    (homeExclusionStore.hasHomeAddress ? SpotRelayTheme.success : SpotRelayTheme.primary).opacity(0.15),
+                    in: Circle()
+                )
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Home protection")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text(homeExclusionStore.home?.address ?? "Add your home so SpotRelay hides parked cars and shared spots within 25m.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 0)
+
+                Text(homeExclusionStore.hasHomeAddress ? "Manage" : "Add")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(SpotRelayTheme.badgeFill, in: Capsule())
+                    .foregroundStyle(homeExclusionStore.hasHomeAddress ? SpotRelayTheme.success : SpotRelayTheme.badgeText)
+            }
+            .padding(18)
+            .glassPanel(
+                cornerRadius: 26,
+                tint: SpotRelayTheme.glassTint,
+                stroke: SpotRelayTheme.softStroke,
+                shadow: SpotRelayTheme.rowShadow,
+                shadowRadius: 14,
+                shadowY: 8
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(homeExclusionStore.hasHomeAddress ? "Manage home address protection" : "Add home address protection")
     }
 
     #if DEBUG

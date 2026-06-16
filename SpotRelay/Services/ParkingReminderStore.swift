@@ -150,7 +150,7 @@ final class ParkingReminderStore: NSObject, ObservableObject {
     nonisolated private static let vehicleConnectionLocationMaximumAccuracyMeters: CLLocationAccuracy = 150
     nonisolated fileprivate static let radiusToleranceMeters: Double = 1
     nonisolated static let parkedLocationRetentionInterval: TimeInterval = 48 * 60 * 60
-    nonisolated private static let parkedLocationHistoryLimit = 10_000
+    nonisolated private static let parkedLocationHistoryLimit = 100
     nonisolated private static let parkedLocationHistoryDuplicateDistanceMeters: CLLocationDistance = 18
     nonisolated private static let parkedLocationHistoryDuplicateTimeWindow: TimeInterval = 6 * 60 * 60
     nonisolated private static let nudgedSessionDuplicateDistanceMeters: CLLocationDistance = 35
@@ -233,6 +233,25 @@ final class ParkingReminderStore: NSObject, ObservableObject {
         areaLabel: String?,
         radiusMeters: Double = defaultRadiusMeters
     ) async throws {
+        if let distance = HomeExclusionPolicy.distanceFromHome(to: coordinate),
+           distance <= HomeExclusionPolicy.radiusMeters {
+            let roundedDistance = Int(distance.rounded())
+            ParkingSequenceLogger.shared.append(
+                "Parked spot skipped near saved home: distance=\(roundedDistance)m <= \(Int(HomeExclusionPolicy.radiusMeters))m"
+            )
+            stopMonitoringReminderRegion()
+            defaults.removeObject(forKey: Keys.activeReminder)
+            defaults.removeObject(forKey: Keys.savedParkedLocation)
+            setHasExitedRegion(false)
+            activeReminder = nil
+            savedParkedLocation = nil
+            updateDebugState(.noReminder)
+            updateSignificantLocationMonitoringIfNeeded()
+            center.removePendingNotificationRequests(withIdentifiers: [Keys.notificationIdentifier])
+            center.removeDeliveredNotifications(withIdentifiers: [Keys.notificationIdentifier])
+            return
+        }
+
         guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else {
             throw Error.regionMonitoringUnavailable
         }
@@ -967,5 +986,114 @@ private extension CLRegion {
 
         return centerDistance <= ParkingReminderStore.radiusToleranceMeters &&
             abs(region.radius - reminder.radiusMeters) <= ParkingReminderStore.radiusToleranceMeters
+    }
+}
+
+struct HomeExclusionLocation: Codable, Equatable {
+    let address: String
+    let latitude: Double
+    let longitude: Double
+    let updatedAt: Date
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+enum HomeExclusionPolicy {
+    nonisolated static let radiusMeters: CLLocationDistance = 25
+
+    private static let storageKey = "homeExclusion.location"
+    private static let defaults = UserDefaults.standard
+
+    static func homeLocation() -> HomeExclusionLocation? {
+        guard let data = defaults.data(forKey: storageKey) else { return nil }
+        return try? JSONDecoder().decode(HomeExclusionLocation.self, from: data)
+    }
+
+    static func persist(_ location: HomeExclusionLocation) {
+        guard let data = try? JSONEncoder().encode(location) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    static func clear() {
+        defaults.removeObject(forKey: storageKey)
+    }
+
+    static func distanceFromHome(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance? {
+        guard let home = homeLocation() else { return nil }
+        let origin = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let destination = CLLocation(latitude: home.latitude, longitude: home.longitude)
+        return origin.distance(from: destination)
+    }
+
+    static func isExcluded(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        guard let distance = distanceFromHome(to: coordinate) else { return false }
+        return distance <= radiusMeters
+    }
+}
+
+@MainActor
+final class HomeExclusionStore: ObservableObject {
+    @Published private(set) var home: HomeExclusionLocation?
+
+    init() {
+        home = HomeExclusionPolicy.homeLocation()
+    }
+
+    var hasHomeAddress: Bool {
+        home != nil
+    }
+
+    func isNearHome(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        HomeExclusionPolicy.isExcluded(coordinate)
+    }
+
+    func distanceFromHome(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance? {
+        HomeExclusionPolicy.distanceFromHome(to: coordinate)
+    }
+
+    func updateHome(address: String) async throws {
+        let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAddress.isEmpty else {
+            throw HomeExclusionError.emptyAddress
+        }
+
+        let placemarks = try await CLGeocoder().geocodeAddressString(trimmedAddress)
+        guard let coordinate = placemarks.first?.location?.coordinate else {
+            throw HomeExclusionError.addressNotFound
+        }
+
+        let location = HomeExclusionLocation(
+            address: trimmedAddress,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            updatedAt: .now
+        )
+        HomeExclusionPolicy.persist(location)
+        home = location
+        ParkingSequenceLogger.shared.append(
+            "Home exclusion updated: lat=\(coordinate.latitude), lon=\(coordinate.longitude), radius=\(Int(HomeExclusionPolicy.radiusMeters))m"
+        )
+    }
+
+    func clearHome() {
+        HomeExclusionPolicy.clear()
+        home = nil
+        ParkingSequenceLogger.shared.append("Home exclusion cleared")
+    }
+}
+
+enum HomeExclusionError: LocalizedError {
+    case emptyAddress
+    case addressNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyAddress:
+            return L10n.tr("Enter a home address before saving.")
+        case .addressNotFound:
+            return L10n.tr("We couldn't find that address. Try adding city, state, or ZIP code.")
+        }
     }
 }

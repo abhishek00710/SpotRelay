@@ -10,6 +10,7 @@ struct HomeView: View {
     @EnvironmentObject private var pushNotificationStore: PushNotificationStore
     @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
     @EnvironmentObject private var smartParkingStore: SmartParkingStore
+    @EnvironmentObject private var homeExclusionStore: HomeExclusionStore
     let onLeaveSoon: () -> Void
     let onSelectSpot: (ParkingSpotSignal) -> Void
     @State private var cameraPosition: MapCameraPosition = .automatic
@@ -24,6 +25,7 @@ struct HomeView: View {
     @State private var lastObservedMapCamera: MapCamera?
     @State private var mapHeadingDegrees: CLLocationDirection = 0
     @State private var parkingReminderAlert: HomeViewAlert?
+    @State private var isShowingHomeAddressSheet = false
     @State private var nearbySheetHeaderHeight: CGFloat = 0
     @State private var expandedSheetContentHeight: CGFloat = 0
     @State private var parkedLocationToastMessage: String?
@@ -72,7 +74,7 @@ struct HomeView: View {
             )
         }
         .sheet(isPresented: $isShowingParkedLocationSheet) {
-            if let parkedLocation = parkingReminderStore.latestRememberedParkedLocation {
+            if let parkedLocation = visibleLatestRememberedParkedLocation {
                 ParkedLocationDetailView(
                     initialReminder: parkedLocation,
                     onSelectReminder: { reminder in
@@ -85,13 +87,20 @@ struct HomeView: View {
                     .environmentObject(spotStore)
                     .environmentObject(parkingReminderStore)
                     .environmentObject(smartParkingStore)
+                    .environmentObject(homeExclusionStore)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
         }
+        .sheet(isPresented: $isShowingHomeAddressSheet) {
+            HomeAddressSheet(homeExclusionStore: homeExclusionStore)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $isShowingProfileSheet) {
             ProfileView()
                 .environmentObject(spotStore)
+                .environmentObject(homeExclusionStore)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -114,7 +123,7 @@ struct HomeView: View {
                         set: { newValue in editingParkedCoordinate = newValue }
                     ),
                     userCoordinate: spotStore.userCoordinate,
-                    nearbySpots: spotStore.nearbyActiveSpots,
+                    nearbySpots: visibleNearbyActiveSpots,
                     currentUserID: spotStore.currentUser.id
                 )
             } else {
@@ -125,7 +134,7 @@ struct HomeView: View {
                 }) {
                     UserAnnotation()
 
-                    if let parkedLocation = parkingReminderStore.savedParkedLocation {
+                    if let parkedLocation = visibleSavedParkedLocation {
                         Annotation("You parked here", coordinate: parkedLocation.coordinate) {
                             Button {
                                 beginParkedPinEditing(using: parkedLocation)
@@ -137,7 +146,8 @@ struct HomeView: View {
                     }
 
                     if let selectedParkedHistoryReminder,
-                       selectedParkedHistoryReminder != parkingReminderStore.savedParkedLocation {
+                       selectedParkedHistoryReminder != visibleSavedParkedLocation,
+                       !homeExclusionStore.isNearHome(selectedParkedHistoryReminder.coordinate) {
                         Annotation("Selected parked spot", coordinate: selectedParkedHistoryReminder.coordinate) {
                             SelectedParkedHistoryPinView()
                         }
@@ -155,13 +165,14 @@ struct HomeView: View {
                     }
 
                     if let selectedSharedHistorySpot,
-                       !spotStore.nearbyActiveSpots.contains(where: { $0.id == selectedSharedHistorySpot.id }) {
+                       !homeExclusionStore.isNearHome(selectedSharedHistorySpot.coordinate),
+                       !visibleNearbyActiveSpots.contains(where: { $0.id == selectedSharedHistorySpot.id }) {
                         Annotation("Selected shared spot", coordinate: selectedSharedHistorySpot.coordinate) {
                             SpotPinView(signal: selectedSharedHistorySpot)
                         }
                     }
 
-                    ForEach(spotStore.nearbyActiveSpots) { spot in
+                    ForEach(visibleNearbyActiveSpots) { spot in
                         Annotation(spot.statusLabel(for: spotStore.currentUser.id), coordinate: spot.coordinate) {
                             Button {
                                 if spot.createdBy != spotStore.currentUser.id && spot.claimedBy != spotStore.currentUser.id {
@@ -206,10 +217,17 @@ struct HomeView: View {
         VStack(spacing: 16) {
             headerCard
             VStack(spacing: 10) {
-                if parkingReminderStore.hasRememberedParkedLocations {
+                if hasVisibleRememberedParkedLocations {
                     HStack {
                         Spacer()
                         parkedLocationShortcutButton
+                    }
+                }
+
+                if !homeExclusionStore.hasHomeAddress {
+                    HStack {
+                        Spacer()
+                        homeExclusionMapButton
                     }
                 }
 
@@ -237,7 +255,7 @@ struct HomeView: View {
                 }
             }
             .padding(.horizontal, 4)
-            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: parkingReminderStore.hasRememberedParkedLocations)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: hasVisibleRememberedParkedLocations)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowRecenterButton)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: shouldShowAutoRelayEnableButton)
             Spacer()
@@ -296,6 +314,37 @@ struct HomeView: View {
             shadowY: 8
         )
         .accessibilityLabel("Turn on Auto Relay")
+    }
+
+    private var homeExclusionMapButton: some View {
+        Button {
+            isShowingHomeAddressSheet = true
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Image(systemName: "house.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(homeExclusionStore.hasHomeAddress ? SpotRelayTheme.success : SpotRelayTheme.textPrimary)
+
+                if !homeExclusionStore.hasHomeAddress {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(SpotRelayTheme.accent)
+                        .background(SpotRelayTheme.strongGlassTint, in: Circle())
+                        .offset(x: 6, y: 5)
+                }
+            }
+            .frame(width: 46, height: 46)
+        }
+        .buttonStyle(.plain)
+        .glassPanel(
+            cornerRadius: 18,
+            tint: SpotRelayTheme.strongGlassTint,
+            stroke: SpotRelayTheme.glassStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
+        .accessibilityLabel(homeExclusionStore.hasHomeAddress ? "Update home address protection" : "Add home address protection")
     }
 
     private var parkedLocationShortcutButton: some View {
@@ -597,7 +646,7 @@ struct HomeView: View {
 
     private var expandedSheetContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
+            if spotStore.userCoordinate == nil && visibleSavedParkedLocation == nil {
                 locationPendingCard
             } else {
                 if !claimSectionSignals.isEmpty {
@@ -805,10 +854,10 @@ struct HomeView: View {
     }
 
     private var sheetSubtitle: String {
-        if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
+        if spotStore.userCoordinate == nil && visibleSavedParkedLocation == nil {
             return L10n.tr("We’ll show live handoffs as soon as we have your current location.")
         }
-        if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation != nil {
+        if spotStore.userCoordinate == nil && visibleSavedParkedLocation != nil {
             return L10n.tr("Your parked location is saved. Nearby claims will return once live location updates.")
         }
         if groupedHandoffCount == 0 {
@@ -824,10 +873,10 @@ struct HomeView: View {
     }
 
     private var collapsedSubtitle: String {
-        if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation == nil {
+        if spotStore.userCoordinate == nil && visibleSavedParkedLocation == nil {
             return L10n.tr("Tap to enable your location")
         }
-        if spotStore.userCoordinate == nil && parkingReminderStore.savedParkedLocation != nil {
+        if spotStore.userCoordinate == nil && visibleSavedParkedLocation != nil {
             return L10n.tr("Parked car saved")
         }
         if groupedHandoffCount == 0 {
@@ -913,11 +962,11 @@ struct HomeView: View {
         if spotStore.currentUserLeavingSignal != nil {
             return "timer"
         }
-        return parkingReminderStore.latestRememberedParkedLocation != nil ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"
+        return visibleLatestRememberedParkedLocation != nil ? "parkingsign.circle.fill" : "arrowshape.turn.up.right.circle.fill"
     }
 
     private var hasShareableLocation: Bool {
-        parkingReminderStore.latestRememberedParkedLocation != nil || spotStore.userCoordinate != nil
+        visibleLatestRememberedParkedLocation != nil || spotStore.userCoordinate != nil
     }
 
     private var shouldShowAutoRelayEnableButton: Bool {
@@ -943,10 +992,47 @@ struct HomeView: View {
     }
 
     private var parkedHistoryMapReminders: [ParkingReminderStore.Reminder] {
-        parkingReminderStore.parkedLocationHistory.prefix(40).filter { reminder in
-            reminder != parkingReminderStore.savedParkedLocation &&
+        visibleParkedLocationHistory.prefix(40).filter { reminder in
+            reminder != visibleSavedParkedLocation &&
             reminder != selectedParkedHistoryReminder
         }
+    }
+
+    private var visibleSavedParkedLocation: ParkingReminderStore.Reminder? {
+        guard let reminder = parkingReminderStore.savedParkedLocation,
+              !homeExclusionStore.isNearHome(reminder.coordinate) else {
+            return nil
+        }
+        return reminder
+    }
+
+    private var visibleLatestRememberedParkedLocation: ParkingReminderStore.Reminder? {
+        if let saved = visibleSavedParkedLocation {
+            return saved
+        }
+        return visibleParkedLocationHistory.first
+    }
+
+    private var visibleParkedLocationHistory: [ParkingReminderStore.Reminder] {
+        parkingReminderStore.parkedLocationHistory.filter { reminder in
+            !homeExclusionStore.isNearHome(reminder.coordinate)
+        }
+    }
+
+    private var visibleNearbyActiveSpots: [ParkingSpotSignal] {
+        spotStore.nearbyActiveSpots.filter { signal in
+            !homeExclusionStore.isNearHome(signal.coordinate)
+        }
+    }
+
+    private var visibleSpots: [ParkingSpotSignal] {
+        spotStore.spots.filter { signal in
+            !homeExclusionStore.isNearHome(signal.coordinate)
+        }
+    }
+
+    private var hasVisibleRememberedParkedLocations: Bool {
+        visibleLatestRememberedParkedLocation != nil
     }
 
     private func recenterOnUser() {
@@ -960,7 +1046,7 @@ struct HomeView: View {
     }
 
     private func focusOnSavedParkedLocation() {
-        guard let reminder = parkingReminderStore.savedParkedLocation else {
+        guard let reminder = visibleSavedParkedLocation ?? visibleLatestRememberedParkedLocation else {
             isShowingParkedLocationSheet = true
             return
         }
@@ -990,7 +1076,7 @@ struct HomeView: View {
     }
 
     private func focusOnSharedSpot(_ signal: ParkingSpotSignal) {
-        if let liveSpot = spotStore.nearbyActiveSpots.first(where: { $0.id == signal.id }) {
+        if let liveSpot = visibleNearbyActiveSpots.first(where: { $0.id == signal.id }) {
             spotStore.activeHandoffID = liveSpot.id
         } else {
             spotStore.activeHandoffID = nil
@@ -1043,7 +1129,7 @@ struct HomeView: View {
 
     private func saveEditedParkedPinFromMap() async {
         guard let coordinate = editingParkedCoordinate,
-              let reminder = parkingReminderStore.savedParkedLocation ?? parkingReminderStore.latestRememberedParkedLocation else {
+              let reminder = visibleSavedParkedLocation ?? visibleLatestRememberedParkedLocation else {
             return
         }
 
@@ -1265,11 +1351,11 @@ struct HomeView: View {
 
     private var claimSectionSignals: [ParkingSpotSignal] {
         let claimedByYou = sortedSignals(
-            spotStore.spots.filter { $0.isActive && $0.claimedBy == spotStore.currentUser.id }
+            visibleSpots.filter { $0.isActive && $0.claimedBy == spotStore.currentUser.id }
         )
         let claimedIDs = Set(claimedByYou.map(\.id))
         let nearbyClaimable = sortedSignals(
-            spotStore.nearbyActiveSpots.filter {
+            visibleNearbyActiveSpots.filter {
                 $0.createdBy != spotStore.currentUser.id &&
                 $0.status == .posted &&
                 !claimedIDs.contains($0.id)
@@ -1280,7 +1366,7 @@ struct HomeView: View {
 
     private var locationSectionSignals: [ParkingSpotSignal] {
         sortedSignals(
-            spotStore.spots.filter { $0.isActive && $0.createdBy == spotStore.currentUser.id }
+            visibleSpots.filter { $0.isActive && $0.createdBy == spotStore.currentUser.id }
         )
     }
 
@@ -1792,6 +1878,334 @@ private struct HomeViewAlert: Identifiable {
     let message: String
 }
 
+private struct HomeAddressSuggestion: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String
+
+    var displayAddress: String {
+        subtitle.isEmpty ? title : "\(title), \(subtitle)"
+    }
+}
+
+private final class HomeAddressSuggestionStore: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published var suggestions: [HomeAddressSuggestion] = []
+    @Published var isSearching = false
+
+    private let completer = MKLocalSearchCompleter()
+    private var latestQuery = ""
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = .address
+    }
+
+    @MainActor
+    func update(query: String) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        latestQuery = trimmedQuery
+
+        guard trimmedQuery.count >= 3 else {
+            completer.queryFragment = ""
+            suggestions = []
+            isSearching = false
+            return
+        }
+
+        isSearching = true
+        completer.queryFragment = trimmedQuery
+    }
+
+    @MainActor
+    func clear() {
+        latestQuery = ""
+        completer.queryFragment = ""
+        suggestions = []
+        isSearching = false
+    }
+
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        let mappedSuggestions = completer.results.prefix(5).map { completion in
+            let displayAddress = completion.subtitle.isEmpty
+                ? completion.title
+                : "\(completion.title), \(completion.subtitle)"
+            return HomeAddressSuggestion(
+                id: displayAddress,
+                title: completion.title,
+                subtitle: completion.subtitle
+            )
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard !self.latestQuery.isEmpty else { return }
+            self.suggestions = mappedSuggestions
+            self.isSearching = false
+        }
+    }
+
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.suggestions = []
+            self.isSearching = false
+        }
+    }
+}
+
+struct HomeAddressSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var homeExclusionStore: HomeExclusionStore
+
+    @StateObject private var addressSuggestions = HomeAddressSuggestionStore()
+    @State private var addressText: String
+    @State private var isSaving = false
+    @State private var alert: HomeViewAlert?
+    @State private var didChooseAddressSuggestion = false
+    @FocusState private var isAddressFieldFocused: Bool
+
+    init(homeExclusionStore: HomeExclusionStore) {
+        self.homeExclusionStore = homeExclusionStore
+        _addressText = State(initialValue: homeExclusionStore.home?.address ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(systemName: "house.fill")
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(SpotRelayTheme.success)
+
+                                if !homeExclusionStore.hasHomeAddress {
+                                    Image(systemName: "plus.circle.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(SpotRelayTheme.accent)
+                                        .background(SpotRelayTheme.strongGlassTint, in: Circle())
+                                        .offset(x: 6, y: 5)
+                                }
+                            }
+                                .frame(width: 44, height: 44)
+                                .background(SpotRelayTheme.success.opacity(0.14), in: Circle())
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(homeExclusionStore.hasHomeAddress ? "Update home protection" : "Add home protection")
+                                    .font(.headline.weight(.bold))
+                                    .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                                Text("Hide anything within 25m of home.")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(SpotRelayTheme.badgeText)
+                            }
+                        }
+
+                        Text("SpotRelay will avoid showing or sharing parked cars and live spots near your saved home address. This keeps private places off the map while the app still works everywhere else.")
+                            .font(.subheadline)
+                            .foregroundStyle(SpotRelayTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(18)
+                    .glassPanel(
+                        cornerRadius: 24,
+                        tint: SpotRelayTheme.glassTint,
+                        stroke: SpotRelayTheme.softStroke,
+                        shadow: SpotRelayTheme.rowShadow,
+                        shadowRadius: 12,
+                        shadowY: 6
+                    )
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Home address")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                        TextField("123 Main St, Fremont, CA", text: $addressText, axis: .vertical)
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.done)
+                            .font(.body.weight(.medium))
+                            .lineLimit(2...4)
+                            .focused($isAddressFieldFocused)
+                            .padding(14)
+                            .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .foregroundStyle(SpotRelayTheme.textPrimary)
+                            .onSubmit {
+                                isAddressFieldFocused = false
+                            }
+
+                        if !addressSuggestions.suggestions.isEmpty {
+                            VStack(spacing: 8) {
+                                ForEach(addressSuggestions.suggestions) { suggestion in
+                                    Button {
+                                        selectAddressSuggestion(suggestion)
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: "mappin.and.ellipse")
+                                                .font(.system(size: 15, weight: .bold))
+                                                .foregroundStyle(SpotRelayTheme.accent)
+                                                .frame(width: 28, height: 28)
+                                                .background(SpotRelayTheme.badgeFill, in: Circle())
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(suggestion.title)
+                                                    .font(.subheadline.weight(.bold))
+                                                    .foregroundStyle(SpotRelayTheme.textPrimary)
+                                                    .lineLimit(1)
+
+                                                if !suggestion.subtitle.isEmpty {
+                                                    Text(suggestion.subtitle)
+                                                        .font(.caption.weight(.semibold))
+                                                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+
+                                            Spacer(minLength: 8)
+                                        }
+                                        .padding(12)
+                                        .background(SpotRelayTheme.badgeFill.opacity(0.74), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        } else if addressSuggestions.isSearching {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                    .tint(SpotRelayTheme.accent)
+                                Text("Finding matching addresses...")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                            }
+                            .padding(.horizontal, 2)
+                        }
+
+                        if let home = homeExclusionStore.home {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Current protected home")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(SpotRelayTheme.badgeText)
+                                Text(home.address)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(SpotRelayTheme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text("Updated \(home.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(SpotRelayTheme.textSecondary.opacity(0.82))
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(18)
+                    .glassPanel(
+                        cornerRadius: 24,
+                        tint: SpotRelayTheme.glassTint,
+                        stroke: SpotRelayTheme.softStroke,
+                        shadow: SpotRelayTheme.rowShadow,
+                        shadowRadius: 12,
+                        shadowY: 6
+                    )
+
+                    HStack(spacing: 12) {
+                        if homeExclusionStore.hasHomeAddress {
+                            Button(role: .destructive) {
+                                homeExclusionStore.clearHome()
+                                dismiss()
+                            } label: {
+                                Text("Remove")
+                                    .font(.subheadline.weight(.bold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                                    .background(SpotRelayTheme.badgeFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .foregroundStyle(SpotRelayTheme.warning)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Button {
+                            saveHomeAddress()
+                        } label: {
+                            HStack {
+                                if isSaving {
+                                    ProgressView()
+                                        .tint(.white)
+                                } else {
+                                    Image(systemName: "checkmark.shield.fill")
+                                }
+                                Text(homeExclusionStore.hasHomeAddress ? "Update" : "Save")
+                            }
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(SpotRelayTheme.heroGradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isSaving || addressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .opacity(isSaving || addressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.55 : 1)
+                    }
+                }
+                .padding(20)
+            }
+            .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
+            .navigationTitle("Home privacy")
+            .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    isAddressFieldFocused = true
+                }
+            }
+            .onChange(of: addressText) { _, newValue in
+                Task { @MainActor in
+                    if didChooseAddressSuggestion {
+                        didChooseAddressSuggestion = false
+                        return
+                    }
+                    addressSuggestions.update(query: newValue)
+                }
+            }
+            .alert(item: $alert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+        }
+    }
+
+    private func saveHomeAddress() {
+        guard !isSaving else { return }
+        isSaving = true
+
+        Task {
+            do {
+                try await homeExclusionStore.updateHome(address: addressText)
+                dismiss()
+            } catch {
+                alert = HomeViewAlert(
+                    title: "Couldn't save home",
+                    message: error.localizedDescription
+                )
+            }
+            isSaving = false
+        }
+    }
+
+    private func selectAddressSuggestion(_ suggestion: HomeAddressSuggestion) {
+        didChooseAddressSuggestion = true
+        addressText = suggestion.displayAddress
+        isAddressFieldFocused = false
+
+        Task { @MainActor in
+            addressSuggestions.clear()
+        }
+    }
+}
+
 private struct MapNorthUpButton: View {
     let headingDegrees: CLLocationDirection
     let action: () -> Void
@@ -2076,6 +2490,7 @@ private struct ParkedLocationDetailView: View {
     @EnvironmentObject private var spotStore: SpotStore
     @EnvironmentObject private var parkingReminderStore: ParkingReminderStore
     @EnvironmentObject private var smartParkingStore: SmartParkingStore
+    @EnvironmentObject private var homeExclusionStore: HomeExclusionStore
 
     let initialReminder: ParkingReminderStore.Reminder
     let onSelectReminder: (ParkingReminderStore.Reminder) -> Void
@@ -2089,11 +2504,27 @@ private struct ParkedLocationDetailView: View {
     @State private var resolvedHistoryPlaceLabels: [Date: String] = [:]
 
     private var reminder: ParkingReminderStore.Reminder {
-        parkingReminderStore.latestRememberedParkedLocation ?? initialReminder
+        visibleSavedParkedLocation ?? history.first ?? initialReminder
     }
 
     private var history: [ParkingReminderStore.Reminder] {
-        parkingReminderStore.parkedLocationHistory
+        parkingReminderStore.parkedLocationHistory.filter { reminder in
+            !homeExclusionStore.isNearHome(reminder.coordinate)
+        }
+    }
+
+    private var sharedHistory: [ParkingSpotSignal] {
+        spotStore.sharedSpotHistory.filter { signal in
+            !homeExclusionStore.isNearHome(signal.coordinate)
+        }
+    }
+
+    private var visibleSavedParkedLocation: ParkingReminderStore.Reminder? {
+        guard let saved = parkingReminderStore.savedParkedLocation,
+              !homeExclusionStore.isNearHome(saved.coordinate) else {
+            return nil
+        }
+        return saved
     }
 
     private struct HistorySection: Identifiable {
@@ -2127,7 +2558,7 @@ private struct ParkedLocationDetailView: View {
         if parkingReminderStore.activeReminder != nil {
             return L10n.tr("Reminder armed")
         }
-        if parkingReminderStore.savedParkedLocation != nil {
+        if visibleSavedParkedLocation != nil {
             return L10n.tr("Ready to share")
         }
         return L10n.tr("History only")
@@ -2167,7 +2598,9 @@ private struct ParkedLocationDetailView: View {
                     directionsPanel
                     recordsPanel
                     controlsPanel
+                    #if DEBUG
                     parkingDebugLogPanel
+                    #endif
                 }
                 .padding(20)
             }
@@ -2185,7 +2618,7 @@ private struct ParkedLocationDetailView: View {
             .sheet(isPresented: $isShowingParkedHistorySheet) {
                 ParkedLocationHistorySheet(
                     reminders: history,
-                    currentReminder: parkingReminderStore.savedParkedLocation,
+                    currentReminder: visibleSavedParkedLocation,
                     userCoordinate: spotStore.userCoordinate,
                     onSelectReminder: { selectedReminder in
                         onSelectReminder(selectedReminder)
@@ -2198,7 +2631,7 @@ private struct ParkedLocationDetailView: View {
             }
             .sheet(isPresented: $isShowingSharedHistorySheet) {
                 SharedSpotHistorySheet(
-                    spots: spotStore.sharedSpotHistory,
+                    spots: sharedHistory,
                     currentUserID: spotStore.currentUser.id,
                     userCoordinate: spotStore.userCoordinate,
                     onSelectSpot: { signal in
@@ -2457,7 +2890,7 @@ private struct ParkedLocationDetailView: View {
                     recordShortcutCard(
                         title: "Shared spots",
                         subtitle: "Review posted handoffs",
-                        count: spotStore.sharedSpotHistory.count,
+                        count: sharedHistory.count,
                         icon: "paperplane.circle.fill",
                         color: SpotRelayTheme.success
                     )
@@ -2523,8 +2956,8 @@ private struct ParkedLocationDetailView: View {
                 .foregroundStyle(SpotRelayTheme.warning)
             }
             .buttonStyle(.plain)
-            .disabled(parkingReminderStore.savedParkedLocation == nil)
-            .opacity(parkingReminderStore.savedParkedLocation == nil ? 0.55 : 1)
+            .disabled(visibleSavedParkedLocation == nil)
+            .opacity(visibleSavedParkedLocation == nil ? 0.55 : 1)
         }
         .padding(20)
         .glassPanel(

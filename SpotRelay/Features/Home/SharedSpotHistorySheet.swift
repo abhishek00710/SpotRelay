@@ -105,15 +105,9 @@ struct SharedSpotHistorySheet: View {
             .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
             .navigationTitle("Shared spots")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .font(.subheadline.weight(.bold))
-                }
-            }
         }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search shared spots")
-        .task(id: filteredSpots.prefix(80).map(\.id).description) {
+        .task(id: filteredSpots.prefix(100).map(\.id).description) {
             await resolveVisiblePlaceLabels()
         }
     }
@@ -251,7 +245,7 @@ struct SharedSpotHistorySheet: View {
     @MainActor
     private func resolveVisiblePlaceLabels() async {
         var nextLabels = resolvedPlaceLabels
-        for signal in filteredSpots.prefix(80) where nextLabels[signal.id] == nil {
+        for signal in filteredSpots.prefix(100) where nextLabels[signal.id] == nil {
             if let label = await sharedSpotHistoryReverseGeocodedPlaceLabel(for: signal.coordinate) {
                 nextLabels[signal.id] = label
             }

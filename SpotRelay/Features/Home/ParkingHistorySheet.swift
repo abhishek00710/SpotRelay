@@ -103,15 +103,9 @@ struct ParkedLocationHistorySheet: View {
             .background(SpotRelayTheme.canvasGradient.ignoresSafeArea())
             .navigationTitle("Parking records")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .font(.subheadline.weight(.bold))
-                }
-            }
         }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search parking records")
-        .task(id: filteredReminders.prefix(80).map(\.createdAt).description) {
+        .task(id: filteredReminders.prefix(100).map(\.createdAt).description) {
             await resolveVisiblePlaceLabels()
         }
     }
@@ -253,7 +247,7 @@ struct ParkedLocationHistorySheet: View {
     @MainActor
     private func resolveVisiblePlaceLabels() async {
         var nextLabels = resolvedPlaceLabels
-        for reminder in filteredReminders.prefix(80) where nextLabels[reminder.createdAt] == nil {
+        for reminder in filteredReminders.prefix(100) where nextLabels[reminder.createdAt] == nil {
             if let label = await parkingHistoryReverseGeocodedPlaceLabel(for: reminder.coordinate) {
                 nextLabels[reminder.createdAt] = label
             }

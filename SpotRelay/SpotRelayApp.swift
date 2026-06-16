@@ -15,6 +15,7 @@ struct SpotRelayApp: App {
     @StateObject private var pushNotificationStore: PushNotificationStore
     @StateObject private var parkingReminderStore: ParkingReminderStore
     @StateObject private var smartParkingStore: SmartParkingStore
+    @StateObject private var homeExclusionStore: HomeExclusionStore
 
     init() {
         let sessionStore = SessionStore()
@@ -23,6 +24,7 @@ struct SpotRelayApp: App {
         let pushStore = PushNotificationStore.shared
         let parkingStore = ParkingReminderStore()
         let smartParkingStore = SmartParkingStore(parkingReminderStore: parkingStore)
+        let homeExclusionStore = HomeExclusionStore()
 
         _session = StateObject(wrappedValue: sessionStore)
         _spotStore = StateObject(
@@ -36,6 +38,7 @@ struct SpotRelayApp: App {
         _pushNotificationStore = StateObject(wrappedValue: pushStore)
         _parkingReminderStore = StateObject(wrappedValue: parkingStore)
         _smartParkingStore = StateObject(wrappedValue: smartParkingStore)
+        _homeExclusionStore = StateObject(wrappedValue: homeExclusionStore)
 
         pushStore.configure(
             backendMode: backendSelection.mode,
@@ -52,6 +55,7 @@ struct SpotRelayApp: App {
                 .environmentObject(pushNotificationStore)
                 .environmentObject(parkingReminderStore)
                 .environmentObject(smartParkingStore)
+                .environmentObject(homeExclusionStore)
         }
     }
 }
