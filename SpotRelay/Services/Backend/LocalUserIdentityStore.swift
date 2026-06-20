@@ -24,15 +24,19 @@ protocol UserIdentityProviding: AnyObject {
     func recordCompletedHandoff(success: Bool, as role: HandoffRole?) -> AppUser
     func updateProfile(displayName: String, avatarJPEGData: Data?) -> AppUser
     func linkAppleAccount(idToken: String, rawNonce: String, fullName: PersonNameComponents?) async throws -> AppUser
+    func deleteCurrentAccount() async throws -> AppUser
 }
 
 enum UserIdentityError: LocalizedError {
     case firebaseRequired
+    case requiresRecentLogin
 
     var errorDescription: String? {
         switch self {
         case .firebaseRequired:
             return L10n.tr("Apple account saving needs the Firebase build. Please try again from the live app.")
+        case .requiresRecentLogin:
+            return L10n.tr("Please sign in with Apple again, then delete your account.")
         }
     }
 }
@@ -129,7 +133,35 @@ final class LocalUserIdentityStore: UserIdentityProviding {
         throw UserIdentityError.firebaseRequired
     }
 
+    func deleteCurrentAccount() async throws -> AppUser {
+        clearLocalProfileCache()
+        currentUser = AppUser(
+            id: UUID().uuidString,
+            displayName: "You",
+            joinedAt: .now,
+            successfulHandoffs: 0,
+            successfulShares: 0,
+            noShowCount: 0,
+            avatarJPEGData: nil
+        )
+        persistLocally(currentUser)
+        subject.send(currentUser)
+        profilesSubject.send([currentUser.id: currentUser])
+        return currentUser
+    }
+
+    private func clearLocalProfileCache() {
+        defaults.removeObject(forKey: Keys.userID)
+        defaults.removeObject(forKey: Keys.displayName)
+        defaults.removeObject(forKey: Keys.joinedAt)
+        defaults.removeObject(forKey: Keys.successfulHandoffs)
+        defaults.removeObject(forKey: Keys.successfulShares)
+        defaults.removeObject(forKey: Keys.noShowCount)
+        defaults.removeObject(forKey: Keys.avatarJPEGData)
+    }
+
     private func persistLocally(_ user: AppUser) {
+        defaults.set(user.id, forKey: Keys.userID)
         defaults.set(user.displayName, forKey: Keys.displayName)
         defaults.set(user.joinedAt, forKey: Keys.joinedAt)
         defaults.set(user.successfulHandoffs, forKey: Keys.successfulHandoffs)
@@ -316,6 +348,32 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
         }
     }
 
+    func deleteCurrentAccount() async throws -> AppUser {
+        guard let firebaseUser = Auth.auth().currentUser else {
+            let result = try await signInAnonymously()
+            return resetToFreshUser(userID: result.user.uid, persistRemoteProfile: true)
+        }
+
+        let deletedUserID = firebaseUser.uid
+        try await deleteRemoteUserData(userID: deletedUserID)
+
+        do {
+            try await delete(firebaseUser)
+        } catch {
+            if (error as NSError).code == AuthErrorCode.requiresRecentLogin.rawValue {
+                throw UserIdentityError.requiresRecentLogin
+            }
+
+            throw error
+        }
+
+        clearLocalProfileCache()
+        shouldSeedRemoteProfileFromLocalCache = false
+        shouldSkipNextAuthProfilePersistence = true
+        let result = try await signInAnonymously()
+        return resetToFreshUser(userID: result.user.uid, persistRemoteProfile: true)
+    }
+
     private func applyAuthenticatedUserID(_ userID: String, shouldPersistProfile: Bool = true) {
         if currentUser.id != userID {
             currentUser = AppUser(
@@ -474,6 +532,93 @@ final class FirebaseUserIdentityStore: UserIdentityProviding {
                 continuation.resume(returning: authResult)
             }
         }
+    }
+
+    private func signInAnonymously() async throws -> AuthDataResult {
+        try await withCheckedThrowingContinuation { continuation in
+            Auth.auth().signInAnonymously { authResult, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let authResult else {
+                    continuation.resume(throwing: UserIdentityError.firebaseRequired)
+                    return
+                }
+
+                continuation.resume(returning: authResult)
+            }
+        }
+    }
+
+    private func delete(_ user: FirebaseAuth.User) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            user.delete { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                continuation.resume(returning: ())
+            }
+        }
+    }
+
+    private func deleteRemoteUserData(userID: String) async throws {
+        let userReference = userDocument(userID: userID)
+        let deviceSnapshot = try await userReference.collection("devices").getDocuments()
+        let batch = database.batch()
+        deviceSnapshot.documents.forEach { document in
+            batch.deleteDocument(document.reference)
+        }
+        batch.deleteDocument(userReference)
+        try await commit(batch)
+    }
+
+    private func commit(_ batch: WriteBatch) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            batch.commit { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                continuation.resume(returning: ())
+            }
+        }
+    }
+
+    private func resetToFreshUser(userID: String, persistRemoteProfile: Bool) -> AppUser {
+        profileListener?.remove()
+        profileListener = nil
+        currentUser = AppUser(
+            id: userID,
+            displayName: "You",
+            joinedAt: .now,
+            successfulHandoffs: 0,
+            successfulShares: 0,
+            noShowCount: 0,
+            avatarJPEGData: nil
+        )
+        knownProfiles = [currentUser.id: currentUser]
+        persistLocally(currentUser)
+        subject.send(currentUser)
+        profilesSubject.send(knownProfiles)
+        startProfileListener(for: userID)
+        if persistRemoteProfile {
+            persistCurrentUserProfile()
+        }
+        return currentUser
+    }
+
+    private func clearLocalProfileCache() {
+        defaults.removeObject(forKey: Keys.displayName)
+        defaults.removeObject(forKey: Keys.joinedAt)
+        defaults.removeObject(forKey: Keys.successfulHandoffs)
+        defaults.removeObject(forKey: Keys.successfulShares)
+        defaults.removeObject(forKey: Keys.noShowCount)
+        defaults.removeObject(forKey: Keys.avatarJPEGData)
     }
 
     private func fetchProfileData(userID: String) async throws -> [String: Any]? {

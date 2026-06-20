@@ -405,7 +405,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             }
             return L10n.tr("Smart parking is on. SpotRelay watches for likely parking moments and arms a return reminder for you.")
         case .needsAlwaysLocation:
-            return L10n.tr("Keep location on Always to let SpotRelay infer parked spots even when the app isn't open.")
+            return L10n.tr("Keep location on Always so SpotRelay can use Apple visit and significant-change signals without persistent real-time tracking.")
         case .needsMotionAccess:
             return L10n.tr("Allow Motion & Fitness so SpotRelay can tell when a car trip has likely ended.")
         case .unsupported:
@@ -458,7 +458,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     func enable() async {
         defaults.set(true, forKey: Keys.isEnabled)
         isEnabled = true
-        parkingSequenceLogger.append("Enable requested")
+        parkingSequenceLogger.append("Smart parking setup requested")
 
         if locationAuthorizationStatus == .notDetermined {
             locationManager.requestWhenInUseAuthorization()
@@ -505,9 +505,14 @@ final class SmartParkingStore: NSObject, ObservableObject {
         startMotionActivityUpdatesIfPossible()
         if locationAuthorizationStatus == .authorizedAlways {
             locationManager.startMonitoringSignificantLocationChanges()
-            locationManager.startUpdatingLocation()
+            requestFreshLocationIfPossible()
         }
         resumePendingVehicleDisconnectFinalizeIfNeeded()
+    }
+
+    private func requestFreshLocationIfPossible() {
+        guard locationAuthorizationStatus == .authorizedWhenInUse || locationAuthorizationStatus == .authorizedAlways else { return }
+        locationManager.requestLocation()
     }
 
     private func startMotionActivityUpdatesIfPossible() {
@@ -566,7 +571,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         motionAuthorizationStatus = CMMotionActivityManager.authorizationStatus()
         if activity.automotive, activity.confidence != .low {
             recentAutomotiveActivityAt = activity.startDate
-            locationManager.startUpdatingLocation()
+            requestFreshLocationIfPossible()
             startBluetoothVehicleScanIfHelpful()
             parkingSequenceLogger.append("Motion activity automotive: confidence=\(activity.confidence.rawValue), startedAt=\(activity.startDate.timeIntervalSince1970)")
             observeSavedParkedSpotWhileUserMoves(
@@ -652,7 +657,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         let batteryState = UIDevice.current.batteryState
 
         if Self.isPhoneConnectedToPower(batteryState) {
-            locationManager.startUpdatingLocation()
+            requestFreshLocationIfPossible()
             return
         }
 
@@ -667,7 +672,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         if activeVehicleSignals == [.coreBluetoothVehicle] {
             parkingSequenceLogger.append("Phone charging disconnect will ignore lingering CoreBluetooth vehicle signal")
         }
-        locationManager.startUpdatingLocation()
+        requestFreshLocationIfPossible()
         handleVehicleDisconnected(
             summary: "vehicle-signal:phone-charging",
             location: locationManager.location,
@@ -1193,7 +1198,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 parkingSequenceLogger.append("Audio route connected: \(record.source.rawValue) \(record.routeName ?? "")")
                 parkingCaptureEngine.vehicleConnected(summary: record.source.captureToken)
                 parkingCaptureSnapshot = parkingCaptureEngine.snapshot
-                locationManager.startUpdatingLocation()
+                requestFreshLocationIfPossible()
                 startBluetoothVehicleScanIfHelpful()
             }
         case .oldDeviceUnavailable:
@@ -1293,7 +1298,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
             clearPendingVehicleDisconnectFinalize()
             parkingCaptureEngine.vehicleConnected(summary: source.captureToken)
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
-            locationManager.startUpdatingLocation()
+            requestFreshLocationIfPossible()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let outcome = await self.parkingReminderStore.handleVehicleConnectionNearParkedCar(

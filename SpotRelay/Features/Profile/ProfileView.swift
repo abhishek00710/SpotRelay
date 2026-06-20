@@ -23,6 +23,10 @@ struct ProfileView: View {
     @State private var isLinkingAppleAccount = false
     @State private var appleSignInErrorMessage: String?
     @State private var isShowingHomeAddressSheet = false
+    @State private var isShowingDeleteAccountConfirmation = false
+    @State private var isDeletingAccount = false
+    @State private var accountDeletionErrorMessage: String?
+    @State private var accountDeletionSuccessMessage: String?
     @FocusState private var isNameEditorFieldFocused: Bool
 
     private var user: AppUser {
@@ -90,6 +94,7 @@ struct ProfileView: View {
                     heroCard
                     accountRecoveryCard
                     homeProtectionCard
+                    accountDeletionCard
                     ProfileInsightsSection(user: user)
                     #if DEBUG
                     debugDemoDataCard
@@ -120,6 +125,40 @@ struct ProfileView: View {
                 HomeAddressSheet(homeExclusionStore: homeExclusionStore)
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
+            }
+            .alert("Delete SpotRelay account?", isPresented: $isShowingDeleteAccountConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete Account", role: .destructive) {
+                    Task {
+                        await performAccountDeletion()
+                    }
+                }
+            } message: {
+                Text("This permanently removes your SpotRelay profile, saved parked car, owned shared spots, and this device's notification record. This cannot be undone.")
+            }
+            .alert("Account deleted", isPresented: Binding(
+                get: { accountDeletionSuccessMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        accountDeletionSuccessMessage = nil
+                    }
+                }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(accountDeletionSuccessMessage ?? "")
+            }
+            .alert("Couldn't delete account", isPresented: Binding(
+                get: { accountDeletionErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        accountDeletionErrorMessage = nil
+                    }
+                }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(accountDeletionErrorMessage ?? "")
             }
         }
         .spotRelayErrorBanner(using: spotStore)
@@ -375,6 +414,61 @@ struct ProfileView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(homeExclusionStore.hasHomeAddress ? "Manage home address protection" : "Add home address protection")
+    }
+
+    private var accountDeletionCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "person.crop.circle.badge.xmark")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(SpotRelayTheme.warning)
+                    .frame(width: 44, height: 44)
+                    .background(SpotRelayTheme.warning.opacity(0.15), in: Circle())
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Delete SpotRelay account")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(SpotRelayTheme.textPrimary)
+
+                    Text("Permanently remove your profile, saved parked car, owned shared spots, and this device's notification record.")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SpotRelayTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Button(role: .destructive) {
+                isShowingDeleteAccountConfirmation = true
+            } label: {
+                HStack {
+                    if isDeletingAccount {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "trash.fill")
+                    }
+
+                    Text(isDeletingAccount ? "Deleting account..." : "Delete Account")
+                }
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(SpotRelayTheme.warning, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+            .disabled(isDeletingAccount)
+            .opacity(isDeletingAccount ? 0.7 : 1)
+        }
+        .padding(18)
+        .glassPanel(
+            cornerRadius: 26,
+            tint: SpotRelayTheme.glassTint,
+            stroke: SpotRelayTheme.softStroke,
+            shadow: SpotRelayTheme.rowShadow,
+            shadowRadius: 14,
+            shadowY: 8
+        )
     }
 
     #if DEBUG
@@ -735,6 +829,26 @@ struct ProfileView: View {
                 avatarProcessingError = L10n.tr("That photo couldn't be prepared for your profile.")
                 selectedPhotoItem = nil
             }
+        }
+    }
+
+    @MainActor
+    private func performAccountDeletion() async {
+        guard !isDeletingAccount else { return }
+
+        isDeletingAccount = true
+        accountDeletionErrorMessage = nil
+        accountDeletionSuccessMessage = nil
+
+        let didDelete = await spotStore.deleteCurrentAccount()
+        isDeletingAccount = false
+
+        if didDelete {
+            homeExclusionStore.clearHome()
+            syncDraftsIfNeeded(force: true)
+            accountDeletionSuccessMessage = L10n.tr("Your SpotRelay account and local saved parking data were deleted.")
+        } else {
+            accountDeletionErrorMessage = spotStore.errorBanner?.message ?? L10n.tr("Please try again in a moment.")
         }
     }
 

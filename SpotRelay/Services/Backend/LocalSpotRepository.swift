@@ -140,6 +140,23 @@ final class LocalSpotRepository: SpotRepository {
         return spots[index]
     }
 
+    func deleteAccountData(for userID: String) async throws {
+        spots = spots.compactMap { spot in
+            if spot.createdBy == userID {
+                return nil
+            }
+
+            var updatedSpot = spot
+            if updatedSpot.claimedBy == userID {
+                updatedSpot.claimedBy = nil
+                if updatedSpot.status == .claimed || updatedSpot.status == .arriving {
+                    updatedSpot.status = .posted
+                }
+            }
+            return updatedSpot
+        }
+    }
+
     private func activeLeavingSignal(createdBy userID: String) -> ParkingSpotSignal? {
         spots.first { $0.isActive && $0.createdBy == userID }
     }

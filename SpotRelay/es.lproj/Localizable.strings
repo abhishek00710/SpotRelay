@@ -75,7 +75,7 @@
 "Driver arriving" = "Conductor llegando";
 "Driver ID • %@" = "ID de conductor • %@";
 "Earns one star" = "Gana una estrella";
-"Enable Current Location" = "Activar ubicación actual";
+"Use Current Location" = "Usar ubicación actual";
 "Enable Location" = "Activar ubicación";
 "Enable Notifications" = "Activar notificaciones";
 "Enable Smart Parking" = "Activar estacionamiento inteligente";
@@ -101,7 +101,7 @@
 "Identity and approach stage reduce uncertainty for both drivers." = "La identidad y la etapa de llegada reducen la incertidumbre para ambos conductores.";
 "I'm Here" = "Ya llegué";
 "Keep claims, arrivals, and timing changes visible." = "Mantén visibles los reclamos, llegadas y cambios de tiempo.";
-"Keep location on Always to let SpotRelay infer parked spots even when the app isn't open." = "Mantén la ubicación en Siempre para que SpotRelay detecte lugares estacionados aunque la app no esté abierta.";
+"Keep location on Always so SpotRelay can use Apple visit and significant-change signals without persistent real-time tracking." = "Mantén la ubicación en Siempre para que SpotRelay use señales de visitas y cambios significativos de Apple sin rastreo persistente en tiempo real.";
 "Keep the handoff visible while you coordinate." = "Mantén el traspaso visible mientras coordinas.";
 "Keep the leaving driver confident with a clear live arrival state." = "Dale confianza al conductor que sale con un estado claro de llegada en vivo.";
 "Keep your status updated so the other driver trusts the handoff." = "Mantén tu estado actualizado para que el otro conductor confíe en el traspaso.";
@@ -248,7 +248,7 @@
 "SpotRelay Handoff Spot" = "Lugar de traspaso de SpotRelay";
 "SpotRelay helps two nearby drivers coordinate a parking handoff in seconds, without awkward guessing or last-minute chaos." = "SpotRelay ayuda a dos conductores cercanos a coordinar un traspaso de estacionamiento en segundos, sin adivinar ni crear caos de último minuto.";
 "SpotRelay trust" = "Confianza SpotRelay";
-"SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car." = "SpotRelay usa tu ubicación en segundo plano para detectar cuándo probablemente estacionaste y recordarte cuando vuelvas a tu auto.";
+"SpotRelay uses Apple visit and significant-change location signals to detect likely parked spots and nearby handoffs without persistent real-time tracking." = "SpotRelay usa señales de visitas y cambios significativos de ubicación de Apple para detectar estacionamientos probables y traspasos cercanos sin rastreo persistente en tiempo real.";
 "SpotRelay uses your location to show nearby parking handoffs and center the map around you." = "SpotRelay usa tu ubicación para mostrar traspasos de estacionamiento cercanos y centrar el mapa a tu alrededor.";
 "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically." = "SpotRelay usa Movimiento y Fitness para detectar cuándo probablemente terminó un viaje en auto y activar recordatorios de estacionamiento automáticamente.";
 "SpotRelay will now look for likely parking stops and arm a return reminder automatically." = "SpotRelay buscará posibles paradas de estacionamiento y activará automáticamente un recordatorio de regreso.";

@@ -223,7 +223,7 @@ service cloud.firestore {
           isCancelTransition() ||
           isCompleteTransition() ||
           isExpiryTransition());
-      allow delete: if false;
+      allow delete: if isSignedIn() && resource.data.createdBy == request.auth.uid;
     }
 
     match /users/{userId} {
@@ -234,7 +234,7 @@ service cloud.firestore {
       allow update: if isSignedIn() &&
         request.auth.uid == userId &&
         isUserProfileDocument(request.resource.data);
-      allow delete: if false;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
     }
 
     match /users/{userId}/devices/{deviceId} {
@@ -246,7 +246,7 @@ service cloud.firestore {
         request.auth.uid == userId &&
         isDeviceDocument(request.resource.data, deviceId) &&
         immutableDeviceFieldsArePreserved();
-      allow delete: if false;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
     }
   }
 }

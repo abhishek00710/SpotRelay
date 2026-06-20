@@ -46,4 +46,5 @@ protocol SpotRepository: AnyObject {
     func markArrival(id: String, userID: String) async throws -> ParkingSpotSignal
     func cancelHandoff(id: String, userID: String) async throws -> ParkingSpotSignal
     func completeHandoff(id: String, userID: String, success: Bool) async throws -> ParkingSpotSignal
+    func deleteAccountData(for userID: String) async throws
 }

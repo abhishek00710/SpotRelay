@@ -271,7 +271,7 @@ struct PostSpotFlowView: View {
                     } label: {
                         HStack {
                             Image(systemName: "location.fill")
-                            Text(L10n.tr("Enable Current Location"))
+                            Text(L10n.tr("Use Current Location"))
                         }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(SpotRelayTheme.primary)

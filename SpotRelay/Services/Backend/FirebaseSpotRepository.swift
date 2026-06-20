@@ -257,6 +257,38 @@ final class FirebaseSpotRepository: SpotRepository {
         return document.model(id: id)
     }
 
+    func deleteAccountData(for userID: String) async throws {
+        try await ensureSignedInAnonymously()
+
+        let ownedSnapshot = try await getDocuments(
+            spotsCollection
+                .whereField("createdBy", isEqualTo: userID)
+                .limit(to: 450)
+        )
+        if !ownedSnapshot.documents.isEmpty {
+            let batch = database.batch()
+            ownedSnapshot.documents.forEach { document in
+                batch.deleteDocument(document.reference)
+            }
+            try await commit(batch)
+        }
+
+        let claimedSnapshot = try await getDocuments(
+            spotsCollection
+                .whereField("claimedBy", isEqualTo: userID)
+                .limit(to: 450)
+        )
+        if !claimedSnapshot.documents.isEmpty {
+            let batch = database.batch()
+            for document in claimedSnapshot.documents {
+                guard let payload = FirestoreSpotDocument(dictionary: document.data()) else { continue }
+                let updatedPayload = payload.releasingClaim()
+                batch.updateData(updatedPayload.claimReleasePatch, forDocument: document.reference)
+            }
+            try await commit(batch)
+        }
+    }
+
     private var spotsCollection: CollectionReference {
         database.collection("spots")
     }

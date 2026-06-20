@@ -485,6 +485,33 @@ final class SpotStore: NSObject, ObservableObject {
         }
     }
 
+    @discardableResult
+    func deleteCurrentAccount() async -> Bool {
+        guard ensureReadyForMutation() else { return false }
+
+        let deletedUserID = currentUser.id
+        do {
+            try await repository.deleteAccountData(for: deletedUserID)
+            currentUser = try await userIdentity.deleteCurrentAccount()
+            activeHandoffID = nil
+            locallyTrackedActiveHandoff = nil
+            sharedSpotHistory = []
+            UserDefaults.standard.removeObject(forKey: Keys.sharedSpotHistory)
+            clearAutoArrivalTracking()
+            await parkingReminderStore.clearReminder()
+            updateLocationTrackingPrecisionForActiveHandoff()
+            applyRepositorySpots(repository.currentSpots)
+            clearErrorBanner()
+            ParkingSequenceLogger.shared.append("Account deleted: user=\(deletedUserID)")
+            return true
+        } catch {
+            let message = userFacingMessage(for: error, fallback: L10n.tr("Please try again in a moment."))
+            presentBanner(title: L10n.tr("Couldn't delete account"), message: message)
+            ParkingSequenceLogger.shared.append("Account deletion failed: \(message)")
+            return false
+        }
+    }
+
     func clearErrorBanner() {
         bannerDismissTask?.cancel()
         errorBanner = nil
@@ -623,7 +650,7 @@ final class SpotStore: NSObject, ObservableObject {
         if let coordinate = locationManager.location?.coordinate {
             setUserLocation(locationManager.location ?? CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
         }
-        locationManager.startUpdatingLocation()
+        locationManager.requestLocation()
     }
 
     private func setUserLocation(_ location: CLLocation) {

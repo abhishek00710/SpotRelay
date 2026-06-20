@@ -75,7 +75,7 @@
 "Driver arriving" = "Driver arriving";
 "Driver ID • %@" = "Driver ID • %@";
 "Earns one star" = "Earns one star";
-"Enable Current Location" = "Enable Current Location";
+"Use Current Location" = "Use Current Location";
 "Enable Location" = "Enable Location";
 "Enable Notifications" = "Enable Notifications";
 "Enable Smart Parking" = "Enable Smart Parking";
@@ -101,7 +101,7 @@
 "Identity and approach stage reduce uncertainty for both drivers." = "Identity and approach stage reduce uncertainty for both drivers.";
 "I'm Here" = "I'm Here";
 "Keep claims, arrivals, and timing changes visible." = "Keep claims, arrivals, and timing changes visible.";
-"Keep location on Always to let SpotRelay infer parked spots even when the app isn't open." = "Keep location on Always to let SpotRelay infer parked spots even when the app isn't open.";
+"Keep location on Always so SpotRelay can use Apple visit and significant-change signals without persistent real-time tracking." = "Keep location on Always so SpotRelay can use Apple visit and significant-change signals without persistent real-time tracking.";
 "Keep the handoff visible while you coordinate." = "Keep the handoff visible while you coordinate.";
 "Keep the leaving driver confident with a clear live arrival state." = "Keep the leaving driver confident with a clear live arrival state.";
 "Keep your status updated so the other driver trusts the handoff." = "Keep your status updated so the other driver trusts the handoff.";
@@ -248,7 +248,7 @@
 "SpotRelay Handoff Spot" = "SpotRelay Handoff Spot";
 "SpotRelay helps two nearby drivers coordinate a parking handoff in seconds, without awkward guessing or last-minute chaos." = "SpotRelay helps two nearby drivers coordinate a parking handoff in seconds, without awkward guessing or last-minute chaos.";
 "SpotRelay trust" = "SpotRelay trust";
-"SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car." = "SpotRelay uses your location in the background to detect when you likely parked and remind you when you return to your car.";
+"SpotRelay uses Apple visit and significant-change location signals to detect likely parked spots and nearby handoffs without persistent real-time tracking." = "SpotRelay uses Apple visit and significant-change location signals to detect likely parked spots and nearby handoffs without persistent real-time tracking.";
 "SpotRelay uses your location to show nearby parking handoffs and center the map around you." = "SpotRelay uses your location to show nearby parking handoffs and center the map around you.";
 "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically." = "SpotRelay uses Motion & Fitness to tell when a drive likely ended so we can arm parking reminders automatically.";
 "SpotRelay will now look for likely parking stops and arm a return reminder automatically." = "SpotRelay will now look for likely parking stops and arm a return reminder automatically.";
