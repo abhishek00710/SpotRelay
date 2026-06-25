@@ -269,6 +269,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private var knownVehiclePeripheralNames = Set<String>()
     private var bluetoothScanStopTask: Task<Void, Never>?
     private var pendingVehicleDisconnectFinalizeTask: Task<Void, Never>?
+    private var parkingLocationBurstStopTask: Task<Void, Never>?
+    private var isParkingLocationBurstActive = false
     private var isPhoneChargingDriveSignalActive = false
     private let parkingSequenceLogger = ParkingSequenceLogger.shared
 
@@ -293,6 +295,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let pendingVehicleDisconnectMaximumAccuracyMeters: CLLocationAccuracy = 12
     nonisolated private static let pendingVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 1.4
     nonisolated private static let pairedVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 10.0
+    nonisolated private static let parkingLocationBurstDuration: TimeInterval = 25
     nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
     nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
     nonisolated private static let resumedDrivingRetireDistanceFromSavedSpot: CLLocationDistance = 250
@@ -357,6 +360,13 @@ final class SmartParkingStore: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshVehicleConnectionEvidence()
+            }
+            .store(in: &notificationCancellables)
+
+        NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.stopParkingLocationBurst(reason: "app entered background")
             }
             .store(in: &notificationCancellables)
 
@@ -483,6 +493,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
         locationManager.stopMonitoringVisits()
         locationManager.stopMonitoringSignificantLocationChanges()
         locationManager.stopUpdatingLocation()
+        parkingLocationBurstStopTask?.cancel()
+        parkingLocationBurstStopTask = nil
+        isParkingLocationBurstActive = false
         motionActivityManager.stopActivityUpdates()
         isMonitoringMotionActivity = false
         clearPendingVehicleDisconnectFinalize()
@@ -512,7 +525,52 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func requestFreshLocationIfPossible() {
         guard locationAuthorizationStatus == .authorizedWhenInUse || locationAuthorizationStatus == .authorizedAlways else { return }
+        if shouldUseParkingLocationBurst {
+            startParkingLocationBurst(reason: "fresh location requested")
+            return
+        }
+
         locationManager.requestLocation()
+    }
+
+    private var shouldUseParkingLocationBurst: Bool {
+        if Self.isBackgroundLocationModeEnabled {
+            return true
+        }
+
+        switch UIApplication.shared.applicationState {
+        case .active, .inactive:
+            return true
+        case .background:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func startParkingLocationBurst(reason: String) {
+        guard locationAuthorizationStatus == .authorizedWhenInUse || locationAuthorizationStatus == .authorizedAlways else { return }
+
+        if !isParkingLocationBurstActive {
+            parkingSequenceLogger.append("Short parking location burst started: \(reason)")
+        }
+
+        isParkingLocationBurstActive = true
+        locationManager.startUpdatingLocation()
+        parkingLocationBurstStopTask?.cancel()
+        parkingLocationBurstStopTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.parkingLocationBurstDuration))
+            self?.stopParkingLocationBurst(reason: "timeout")
+        }
+    }
+
+    private func stopParkingLocationBurst(reason: String) {
+        guard isParkingLocationBurstActive else { return }
+        locationManager.stopUpdatingLocation()
+        parkingLocationBurstStopTask?.cancel()
+        parkingLocationBurstStopTask = nil
+        isParkingLocationBurstActive = false
+        parkingSequenceLogger.append("Short parking location burst stopped: \(reason)")
     }
 
     private func startMotionActivityUpdatesIfPossible() {
@@ -599,6 +657,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 latestLocation: latestLocation
             )
             await notifyParkedReminderIfVehicleConnectedNearCar(using: latestLocation)
+        }
+        for location in locations {
+            parkingCaptureEngine.refinePendingVehicleDisconnectLocation(with: location)
         }
         if let event = parkingCaptureEngine.ingest(locations: locations) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -720,6 +781,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
             location: location,
             disconnectedAt: disconnectedAt
         ) else {
+            scheduleTransientPendingVehicleDisconnectFinalize(disconnectedAt: disconnectedAt)
+            parkingSequenceLogger.append("Pending vehicle disconnect finalize armed without precise cached GPS: source=\(sourceSummary)")
             return
         }
 
@@ -728,6 +791,40 @@ final class SmartParkingStore: NSObject, ObservableObject {
         parkingSequenceLogger.append(
             "Pending vehicle disconnect finalize armed: source=\(sourceSummary), lat=\(record.latitude), lon=\(record.longitude), accuracy=\(Int(record.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", record.speedMetersPerSecond))m/s"
         )
+    }
+
+    private func scheduleTransientPendingVehicleDisconnectFinalize(disconnectedAt: Date) {
+        pendingVehicleDisconnectFinalizeTask?.cancel()
+        let fireIn = max(
+            0,
+            disconnectedAt.addingTimeInterval(Self.pendingVehicleDisconnectSettleDelay).timeIntervalSinceNow
+        )
+
+        pendingVehicleDisconnectFinalizeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(fireIn))
+            await self?.finalizeTransientPendingVehicleDisconnect(disconnectedAt: disconnectedAt)
+        }
+    }
+
+    private func finalizeTransientPendingVehicleDisconnect(disconnectedAt: Date) async {
+        guard Date().timeIntervalSince(disconnectedAt) <= Self.pendingVehicleDisconnectMaximumRestoreAge else {
+            parkingSequenceLogger.append("Transient vehicle disconnect expired before save")
+            clearPendingVehicleDisconnectFinalize()
+            return
+        }
+
+        if let event = parkingCaptureEngine.finalizePendingVehicleDisconnect(at: Date()) {
+            parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+            parkingSequenceLogger.append("Transient vehicle disconnect produced capture event: source=\(event.source.rawValue), confidence=\(event.confidenceScore), evidence=\(event.evidenceSummary)")
+            await processParkingCaptureEvent(event)
+            return
+        }
+
+        parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+        parkingSequenceLogger.append("Transient vehicle disconnect did not save: \(parkingCaptureSnapshot.lastReason)")
+        if parkingCaptureEngine.pendingVehicleDisconnectAt == nil {
+            clearPendingVehicleDisconnectFinalize()
+        }
     }
 
     private func pendingVehicleDisconnectRecord(
@@ -1566,6 +1663,9 @@ extension SmartParkingStore: CLLocationManagerDelegate {
         #if DEBUG
         print("SpotRelay smart parking location error:", error.localizedDescription)
         #endif
+        Task { @MainActor [weak self] in
+            self?.parkingSequenceLogger.append("Location request failed: \(error.localizedDescription)")
+        }
     }
 }
 

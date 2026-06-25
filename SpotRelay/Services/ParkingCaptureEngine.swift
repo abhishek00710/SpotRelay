@@ -302,6 +302,30 @@ struct ParkingCaptureEngine {
         return settleFromPendingVehicleDisconnectIfReady(at: date)
     }
 
+    mutating func refinePendingVehicleDisconnectLocation(with location: CLLocation) {
+        guard var activeSession = session,
+              let disconnectAt = activeSession.pendingVehicleDisconnectAt,
+              activeSession.pendingVehicleDisconnectLocation == nil else {
+            return
+        }
+
+        guard location.timestamp >= disconnectAt,
+              location.timestamp.timeIntervalSince(disconnectAt) <= Self.vehicleDisconnectSettleDelay else {
+            return
+        }
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= Self.preciseVehicleDisconnectAccuracyMeters else {
+            return
+        }
+        guard location.speed < 0 || location.speed <= Self.maximumWalkingSpeedMetersPerSecond else {
+            return
+        }
+
+        activeSession.pendingVehicleDisconnectLocation = normalizedDisconnectLocation(location, at: disconnectAt)
+        activeSession.evidence.insert("fresh disconnect GPS fix")
+        session = activeSession
+    }
+
     private mutating func ensureSession(startedAt: Date, evidence: String) {
         if session == nil {
             let initialSamples = recentSamples.filter {
