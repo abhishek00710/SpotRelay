@@ -243,6 +243,31 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
     }
 
+    private struct RecentParkingLocationRecord: Codable, Equatable {
+        let latitude: Double
+        let longitude: Double
+        let horizontalAccuracy: Double
+        let speedMetersPerSecond: Double?
+        let capturedAt: Date
+
+        var location: CLLocation {
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                altitude: 0,
+                horizontalAccuracy: horizontalAccuracy,
+                verticalAccuracy: -1,
+                course: -1,
+                speed: speedMetersPerSecond ?? -1,
+                timestamp: capturedAt
+            )
+        }
+    }
+
+    private struct RecentVehicleDisconnectRecord: Equatable {
+        let sourceSummary: String
+        let disconnectedAt: Date
+    }
+
     @Published private(set) var status: Status = .disabled
     @Published private(set) var isEnabled = false
     @Published private(set) var locationAuthorizationStatus: CLAuthorizationStatus = .notDetermined
@@ -272,6 +297,8 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private var parkingLocationBurstStopTask: Task<Void, Never>?
     private var isParkingLocationBurstActive = false
     private var isPhoneChargingDriveSignalActive = false
+    private var lastAccurateParkingLocation: RecentParkingLocationRecord?
+    private var recentVehicleDisconnectRecords: [RecentVehicleDisconnectRecord] = []
     private let parkingSequenceLogger = ParkingSequenceLogger.shared
 
     private enum Keys {
@@ -281,6 +308,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         static let lastInferenceAssessment = "smartParking.lastInferenceAssessment"
         static let knownVehiclePeripheralNames = "smartParking.knownVehiclePeripheralNames"
         static let pendingVehicleDisconnectRecord = "smartParking.pendingVehicleDisconnectRecord"
+        static let lastAccurateParkingLocation = "smartParking.lastAccurateParkingLocation"
     }
 
     nonisolated private static let duplicateArmSuppressionWindow: TimeInterval = 12 * 60 * 60
@@ -295,6 +323,10 @@ final class SmartParkingStore: NSObject, ObservableObject {
     nonisolated private static let pendingVehicleDisconnectMaximumAccuracyMeters: CLLocationAccuracy = 12
     nonisolated private static let pendingVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 1.4
     nonisolated private static let pairedVehicleDisconnectMaximumSpeedMetersPerSecond: CLLocationSpeed = 10.0
+    nonisolated private static let pairedVehicleDisconnectSignalWindow: TimeInterval = 45
+    nonisolated private static let disconnectFallbackMaximumLocationAge: TimeInterval = 6 * 60
+    nonisolated private static let disconnectFallbackMaximumAccuracyMeters: CLLocationAccuracy = 24
+    nonisolated private static let disconnectFallbackMaximumSpeedMetersPerSecond: CLLocationSpeed = 1.4
     nonisolated private static let parkingLocationBurstDuration: TimeInterval = 25
     nonisolated private static let resumedDrivingSpeedMetersPerSecond: CLLocationSpeed = 6
     nonisolated private static let resumedDrivingMinimumDistanceFromSavedSpot: CLLocationDistance = 110
@@ -336,6 +368,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         lastAutoArmRecord = Self.loadAutoArmRecord(from: defaults)
         recentVehicleSignal = Self.loadVehicleSignalRecord(from: defaults)
         lastInferenceAssessment = Self.loadInferenceAssessment(from: defaults)
+        lastAccurateParkingLocation = Self.loadRecentParkingLocationRecord(from: defaults)
         knownVehiclePeripheralNames = Set(defaults.stringArray(forKey: Keys.knownVehiclePeripheralNames) ?? [])
         bluetoothManager = CBCentralManager(delegate: self, queue: nil, options: [
             CBCentralManagerOptionShowPowerAlertKey: false
@@ -652,6 +685,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         guard isEnabled else { return }
         if let latestLocation = locations.last {
             parkingSequenceLogger.append("Location update: count=\(locations.count), lat=\(latestLocation.coordinate.latitude), lon=\(latestLocation.coordinate.longitude), accuracy=\(Int(latestLocation.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", max(latestLocation.speed, 0)))")
+            rememberAccurateParkingLocationCandidates(locations)
             observeSavedParkedSpotWhileUserMoves(
                 hasAutomotiveSignal: false,
                 latestLocation: latestLocation
@@ -741,16 +775,153 @@ final class SmartParkingStore: NSObject, ObservableObject {
         )
     }
 
+    private func rememberAccurateParkingLocationCandidates(_ locations: [CLLocation]) {
+        for location in locations {
+            guard isUsableVehicleDisconnectLocation(location, at: .now) else { continue }
+
+            let record = RecentParkingLocationRecord(
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
+                horizontalAccuracy: location.horizontalAccuracy,
+                speedMetersPerSecond: location.speed >= 0 ? location.speed : nil,
+                capturedAt: location.timestamp
+            )
+
+            if let lastAccurateParkingLocation,
+               lastAccurateParkingLocation.capturedAt >= record.capturedAt {
+                continue
+            }
+
+            lastAccurateParkingLocation = record
+            persist(record)
+        }
+    }
+
+    private func bestVehicleDisconnectLocation(
+        preferredLocation: CLLocation?,
+        disconnectedAt: Date
+    ) -> CLLocation? {
+        if let preferredLocation,
+           isUsableVehicleDisconnectLocation(preferredLocation, at: disconnectedAt) {
+            return preferredLocation
+        }
+
+        if let managerLocation = locationManager.location,
+           isUsableVehicleDisconnectLocation(managerLocation, at: disconnectedAt) {
+            return managerLocation
+        }
+
+        guard let cachedRecord = lastAccurateParkingLocation else { return nil }
+        let cachedLocation = cachedRecord.location
+        guard isUsableVehicleDisconnectLocation(cachedLocation, at: disconnectedAt) else {
+            return nil
+        }
+
+        parkingSequenceLogger.append(
+            "Using cached precise GPS for vehicle disconnect: age=\(Int(disconnectedAt.timeIntervalSince(cachedRecord.capturedAt).rounded()))s, accuracy=\(Int(cachedRecord.horizontalAccuracy.rounded()))m"
+        )
+        return cachedLocation
+    }
+
+    private func isUsableVehicleDisconnectLocation(_ location: CLLocation, at referenceDate: Date) -> Bool {
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= Self.disconnectFallbackMaximumAccuracyMeters else {
+            return false
+        }
+
+        let age = abs(referenceDate.timeIntervalSince(location.timestamp))
+        return age <= Self.disconnectFallbackMaximumLocationAge
+    }
+
+    private func noteVehicleDisconnectAndCheckForPair(
+        summary: String,
+        disconnectedAt: Date
+    ) -> Bool {
+        recentVehicleDisconnectRecords = recentVehicleDisconnectRecords.filter {
+            disconnectedAt.timeIntervalSince($0.disconnectedAt) <= Self.pairedVehicleDisconnectSignalWindow
+        }
+
+        let hasPairedDisconnect = recentVehicleDisconnectRecords.contains {
+            $0.sourceSummary != summary
+        }
+
+        recentVehicleDisconnectRecords.append(
+            RecentVehicleDisconnectRecord(
+                sourceSummary: summary,
+                disconnectedAt: disconnectedAt
+            )
+        )
+        recentVehicleDisconnectRecords = Array(recentVehicleDisconnectRecords.suffix(6))
+        return hasPairedDisconnect
+    }
+
+    private func shouldArmVehicleDisconnectFallbackWithoutEngineSession(
+        summary: String,
+        location: CLLocation?,
+        isStrongPairedDisconnect: Bool
+    ) -> Bool {
+        guard !parkingCaptureEngine.hasActiveSession else { return false }
+        guard isLikelyVehicleDisconnectSource(summary) else { return false }
+        guard let location,
+              isUsableVehicleDisconnectLocation(location, at: .now) else {
+            return false
+        }
+
+        let speed = location.speed >= 0
+            ? location.speed
+            : parkingCaptureSnapshot.lastSpeedMetersPerSecond
+
+        if isStrongPairedDisconnect,
+           (speed ?? 0) < Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond {
+            parkingSequenceLogger.append("Vehicle disconnect fallback armed from paired disconnect signals without active drive session")
+            return true
+        }
+
+        if let speed,
+           speed <= Self.disconnectFallbackMaximumSpeedMetersPerSecond {
+            parkingSequenceLogger.append("Vehicle disconnect fallback armed from stopped disconnect without active drive session")
+            return true
+        }
+
+        if speed == nil,
+           location.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters {
+            parkingSequenceLogger.append("Vehicle disconnect fallback armed from precise disconnect without speed sample")
+            return true
+        }
+
+        parkingSequenceLogger.append(
+            "Vehicle disconnect fallback skipped without active drive session: speed=\(speed.map { String(format: "%.2f", $0) } ?? "unknown")m/s"
+        )
+        return false
+    }
+
+    private func isLikelyVehicleDisconnectSource(_ summary: String) -> Bool {
+        summary == "vehicle-signal:carplay" ||
+        summary == "vehicle-signal:car-audio" ||
+        summary == "vehicle-signal:bluetooth-audio" ||
+        summary == "vehicle-signal:corebluetooth" ||
+        summary == "vehicle-signal:phone-charging"
+    }
+
     private func handleVehicleDisconnected(
         summary: String,
         location: CLLocation?,
         allowingRemainingActiveSignals allowedRemainingActiveSignals: Set<String> = []
     ) {
         let disconnectedAt = Date()
+        let disconnectLocation = bestVehicleDisconnectLocation(
+            preferredLocation: location,
+            disconnectedAt: disconnectedAt
+        )
+        let hasStoreLevelPairedDisconnect = noteVehicleDisconnectAndCheckForPair(
+            summary: summary,
+            disconnectedAt: disconnectedAt
+        )
+
         if let event = parkingCaptureEngine.vehicleDisconnected(
             summary: summary,
             at: disconnectedAt,
-            location: location,
+            location: disconnectLocation,
             allowingRemainingActiveSignals: allowedRemainingActiveSignals
         ) {
             parkingCaptureSnapshot = parkingCaptureEngine.snapshot
@@ -762,11 +933,24 @@ final class SmartParkingStore: NSObject, ObservableObject {
         }
 
         parkingCaptureSnapshot = parkingCaptureEngine.snapshot
+        let hasStrongPairedDisconnect = hasStoreLevelPairedDisconnect || parkingCaptureEngine.hasStrongPairedVehicleDisconnect
         if let pendingAt = parkingCaptureEngine.pendingVehicleDisconnectAt {
             armPendingVehicleDisconnectFinalize(
                 sourceSummary: summary,
-                location: location,
-                disconnectedAt: pendingAt
+                location: disconnectLocation,
+                disconnectedAt: pendingAt,
+                isStrongPairedDisconnect: hasStrongPairedDisconnect
+            )
+        } else if shouldArmVehicleDisconnectFallbackWithoutEngineSession(
+            summary: summary,
+            location: disconnectLocation,
+            isStrongPairedDisconnect: hasStrongPairedDisconnect
+        ) {
+            armPendingVehicleDisconnectFinalize(
+                sourceSummary: summary,
+                location: disconnectLocation,
+                disconnectedAt: disconnectedAt,
+                isStrongPairedDisconnect: hasStrongPairedDisconnect
             )
         }
     }
@@ -774,23 +958,53 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private func armPendingVehicleDisconnectFinalize(
         sourceSummary: String,
         location: CLLocation?,
-        disconnectedAt: Date
+        disconnectedAt: Date,
+        isStrongPairedDisconnect: Bool
     ) {
         guard let record = pendingVehicleDisconnectRecord(
             sourceSummary: sourceSummary,
             location: location,
-            disconnectedAt: disconnectedAt
+            disconnectedAt: disconnectedAt,
+            isStrongPairedDisconnect: isStrongPairedDisconnect
         ) else {
             scheduleTransientPendingVehicleDisconnectFinalize(disconnectedAt: disconnectedAt)
             parkingSequenceLogger.append("Pending vehicle disconnect finalize armed without precise cached GPS: source=\(sourceSummary)")
             return
         }
 
-        persist(record)
-        schedulePendingVehicleDisconnectFinalize(record)
+        let finalRecord = recordPreservingFirstDisconnectLocationIfNeeded(record)
+        persist(finalRecord)
+        schedulePendingVehicleDisconnectFinalize(finalRecord)
         parkingSequenceLogger.append(
-            "Pending vehicle disconnect finalize armed: source=\(sourceSummary), lat=\(record.latitude), lon=\(record.longitude), accuracy=\(Int(record.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", record.speedMetersPerSecond))m/s"
+            "Pending vehicle disconnect finalize armed: source=\(sourceSummary), lat=\(finalRecord.latitude), lon=\(finalRecord.longitude), accuracy=\(Int(finalRecord.horizontalAccuracy.rounded()))m, speed=\(String(format: "%.2f", finalRecord.speedMetersPerSecond))m/s"
         )
+    }
+
+    private func recordPreservingFirstDisconnectLocationIfNeeded(
+        _ record: PendingVehicleDisconnectRecord
+    ) -> PendingVehicleDisconnectRecord {
+        guard let existingRecord = Self.loadPendingVehicleDisconnectRecord(from: defaults),
+              record.disconnectedAt >= existingRecord.disconnectedAt,
+              record.disconnectedAt.timeIntervalSince(existingRecord.disconnectedAt) <= Self.pairedVehicleDisconnectSignalWindow else {
+            return record
+        }
+
+        let upgradedPairedSignal = existingRecord.isStrongPairedDisconnect == true || record.isStrongPairedDisconnect == true
+        let preservedRecord = PendingVehicleDisconnectRecord(
+            id: existingRecord.id,
+            sourceSummary: existingRecord.sourceSummary,
+            disconnectedAt: existingRecord.disconnectedAt,
+            latitude: existingRecord.latitude,
+            longitude: existingRecord.longitude,
+            horizontalAccuracy: existingRecord.horizontalAccuracy,
+            speedMetersPerSecond: existingRecord.speedMetersPerSecond,
+            isStrongPairedDisconnect: upgradedPairedSignal
+        )
+
+        parkingSequenceLogger.append(
+            "Preserving first vehicle disconnect location after paired signal: firstLat=\(existingRecord.latitude), firstLon=\(existingRecord.longitude), nextLat=\(record.latitude), nextLon=\(record.longitude)"
+        )
+        return preservedRecord
     }
 
     private func scheduleTransientPendingVehicleDisconnectFinalize(disconnectedAt: Date) {
@@ -830,20 +1044,20 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private func pendingVehicleDisconnectRecord(
         sourceSummary: String,
         location: CLLocation?,
-        disconnectedAt: Date
+        disconnectedAt: Date,
+        isStrongPairedDisconnect: Bool
     ) -> PendingVehicleDisconnectRecord? {
         guard let location else { return nil }
         guard location.horizontalAccuracy >= 0,
-              location.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters else {
+              location.horizontalAccuracy <= Self.disconnectFallbackMaximumAccuracyMeters else {
             return nil
         }
 
-        let speed = location.speed >= 0
+        let observedSpeed = location.speed >= 0
             ? location.speed
             : parkingCaptureSnapshot.lastSpeedMetersPerSecond
-        let isStrongPairedDisconnect = parkingCaptureEngine.hasStrongPairedVehicleDisconnect
-        guard let speed,
-              speed <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond ||
+        let speed = observedSpeed ?? 0
+        guard speed <= Self.disconnectFallbackMaximumSpeedMetersPerSecond ||
               (isStrongPairedDisconnect && speed < Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond) else {
             return nil
         }
@@ -923,7 +1137,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
         from record: PendingVehicleDisconnectRecord
     ) -> ParkingCaptureEvent? {
         let isStrongPairedDisconnect = record.isStrongPairedDisconnect == true
-        guard record.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters,
+        guard record.horizontalAccuracy <= Self.disconnectFallbackMaximumAccuracyMeters,
               record.speedMetersPerSecond <= Self.pendingVehicleDisconnectMaximumSpeedMetersPerSecond ||
               (isStrongPairedDisconnect && record.speedMetersPerSecond < Self.pairedVehicleDisconnectMaximumSpeedMetersPerSecond) else {
             return nil
@@ -1594,6 +1808,11 @@ final class SmartParkingStore: NSObject, ObservableObject {
         defaults.set(data, forKey: Keys.lastInferenceAssessment)
     }
 
+    private func persist(_ record: RecentParkingLocationRecord) {
+        guard let data = try? JSONEncoder().encode(record) else { return }
+        defaults.set(data, forKey: Keys.lastAccurateParkingLocation)
+    }
+
     private func persist(_ record: PendingVehicleDisconnectRecord) {
         guard let data = try? JSONEncoder().encode(record) else { return }
         defaults.set(data, forKey: Keys.pendingVehicleDisconnectRecord)
@@ -1612,6 +1831,11 @@ final class SmartParkingStore: NSObject, ObservableObject {
     private static func loadInferenceAssessment(from defaults: UserDefaults) -> ConfidenceAssessment? {
         guard let data = defaults.data(forKey: Keys.lastInferenceAssessment) else { return nil }
         return try? JSONDecoder().decode(ConfidenceAssessment.self, from: data)
+    }
+
+    private static func loadRecentParkingLocationRecord(from defaults: UserDefaults) -> RecentParkingLocationRecord? {
+        guard let data = defaults.data(forKey: Keys.lastAccurateParkingLocation) else { return nil }
+        return try? JSONDecoder().decode(RecentParkingLocationRecord.self, from: data)
     }
 
     private static func loadPendingVehicleDisconnectRecord(from defaults: UserDefaults) -> PendingVehicleDisconnectRecord? {
