@@ -846,7 +846,7 @@ final class SmartParkingStore: NSObject, ObservableObject {
 
     private func updateTrustedParkingCandidate(from locations: [CLLocation]) {
         guard !activeVehicleSignals.isEmpty || isPhoneChargingDriveSignalActive else { return }
-        guard parkingCaptureSnapshot.driveDistanceMeters >= Self.phoneChargingDriveDistanceMeters else { return }
+        guard hasTrustedParkingCandidateDriveContext else { return }
 
         for location in locations.sorted(by: { $0.timestamp < $1.timestamp }) {
             guard location.horizontalAccuracy >= 0,
@@ -878,6 +878,27 @@ final class SmartParkingStore: NSObject, ObservableObject {
                     "Trusted parking candidate updated: lat=\(record.latitude), lon=\(record.longitude), accuracy=\(Int(record.horizontalAccuracy.rounded()))m, speed=\(record.speedMetersPerSecond.map { String(format: "%.2f", $0) } ?? "unknown")m/s"
                 )
             }
+        }
+    }
+
+    private var hasTrustedParkingCandidateDriveContext: Bool {
+        if parkingCaptureSnapshot.driveDistanceMeters >= Self.phoneChargingDriveDistanceMeters {
+            return true
+        }
+
+        guard let recentAutomotiveActivityAt,
+              Date().timeIntervalSince(recentAutomotiveActivityAt) <= Self.automotiveSignalFreshnessWindow else {
+            return false
+        }
+
+        switch parkingCaptureSnapshot.lastReason {
+        case "Driving motion detected",
+             "Parking candidate: waiting for dwell",
+             "Parking candidate: vehicle signal still active",
+             "Parking candidate: waiting for vehicle disconnect":
+            return true
+        default:
+            return parkingCaptureSnapshot.phase == .parkedCandidate
         }
     }
 
@@ -1041,6 +1062,20 @@ final class SmartParkingStore: NSObject, ObservableObject {
         return true
     }
 
+    private func canContinueWithPreciseDelayedDisconnectLocation(_ location: CLLocation?) -> Bool {
+        guard let location else { return false }
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters else {
+            return false
+        }
+
+        guard location.speed < 0 || location.speed <= Self.trustedParkingCandidateMaximumSpeedMetersPerSecond else {
+            return false
+        }
+
+        return true
+    }
+
     private func trustedParkingCandidateFallbackEvent(
         sourceSummary: String,
         confirmedAt: Date,
@@ -1137,11 +1172,17 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 Task {
                     await processParkingCaptureEvent(fallbackEvent)
                 }
+                requestFreshLocationIfPossible()
+                return
+            } else if canContinueWithPreciseDelayedDisconnectLocation(disconnectLocation) {
+                parkingSequenceLogger.append(
+                    "Vehicle disconnect delayed with no trusted candidate; continuing with precise stopped disconnect GPS: source=\(summary), accuracy=\(Int(disconnectLocation?.horizontalAccuracy.rounded() ?? 0))m"
+                )
             } else {
                 parkingSequenceLogger.append("Vehicle disconnect delayed with no trusted candidate to save: source=\(summary)")
+                requestFreshLocationIfPossible()
+                return
             }
-            requestFreshLocationIfPossible()
-            return
         }
 
         let hasStoreLevelPairedDisconnect = noteVehicleDisconnectAndCheckForPair(
