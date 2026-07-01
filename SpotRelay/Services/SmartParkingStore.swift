@@ -1062,18 +1062,18 @@ final class SmartParkingStore: NSObject, ObservableObject {
         return true
     }
 
-    private func canContinueWithPreciseDelayedDisconnectLocation(_ location: CLLocation?) -> Bool {
+    private func canContinueWithDelayedDisconnectLocation(_ location: CLLocation?) -> Bool {
         guard let location else { return false }
         guard location.horizontalAccuracy >= 0,
-              location.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters else {
+              location.horizontalAccuracy <= Self.disconnectFallbackMaximumAccuracyMeters else {
             return false
         }
 
-        guard location.speed < 0 || location.speed <= Self.trustedParkingCandidateMaximumSpeedMetersPerSecond else {
-            return false
+        if location.horizontalAccuracy <= Self.pendingVehicleDisconnectMaximumAccuracyMeters {
+            return location.speed < 0 || location.speed <= Self.trustedParkingCandidateMaximumSpeedMetersPerSecond
         }
 
-        return true
+        return location.speed >= 0 && location.speed <= Self.trustedParkingCandidateMaximumSpeedMetersPerSecond
     }
 
     private func trustedParkingCandidateFallbackEvent(
@@ -1174,9 +1174,9 @@ final class SmartParkingStore: NSObject, ObservableObject {
                 }
                 requestFreshLocationIfPossible()
                 return
-            } else if canContinueWithPreciseDelayedDisconnectLocation(disconnectLocation) {
+            } else if canContinueWithDelayedDisconnectLocation(disconnectLocation) {
                 parkingSequenceLogger.append(
-                    "Vehicle disconnect delayed with no trusted candidate; continuing with precise stopped disconnect GPS: source=\(summary), accuracy=\(Int(disconnectLocation?.horizontalAccuracy.rounded() ?? 0))m"
+                    "Vehicle disconnect delayed with no trusted candidate; continuing with stopped disconnect GPS confirmation: source=\(summary), accuracy=\(Int(disconnectLocation?.horizontalAccuracy.rounded() ?? 0))m"
                 )
             } else {
                 parkingSequenceLogger.append("Vehicle disconnect delayed with no trusted candidate to save: source=\(summary)")
